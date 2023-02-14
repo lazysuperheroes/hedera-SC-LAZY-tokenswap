@@ -49,7 +49,7 @@ let contractAddress;
 let abi;
 let alicePK, aliceId;
 let bobPK, bobId;
-let tokenId, nftTokenId;
+let ftTokenId, newNftTokenId, legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId;
 let client;
 
 describe('Deployment: ', function() {
@@ -83,7 +83,7 @@ describe('Deployment: ', function() {
 		console.log('\n-Testing:', contractName);
 		// create Alice account
 		alicePK = PrivateKey.generateED25519();
-		aliceId = await accountCreator(alicePK, 160);
+		aliceId = await accountCreator(alicePK, 500);
 		console.log('Alice account ID:', aliceId.toString(), '\nkey:', alicePK.toString());
 
 		client.setOperator(aliceId, alicePK);
@@ -91,13 +91,13 @@ describe('Deployment: ', function() {
 		await mintFT(aliceId, alicePK);
 		// mint three legacy NFT collections from Alice account of 50 serials
 		// mint one new collection of 150 serials to swap into
-		await mintNFT();
+		await mintNFTs();
 
 		client.setOperator(operatorId, operatorKey);
 		// associate FT/NFT to operator
-		let result = await associateTokensToAccount(operatorId, [tokenId]);
+		let result = await associateTokensToAccount(operatorId, [ftTokenId]);
 		expect(result).to.be.equal('SUCCESS');
-		result = await associateTokensToAccount(operatorId, nftTokenId);
+		result = await associateTokensToAccount(operatorId, [newNftTokenId, legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId]);
 		expect(result).to.be.equal('SUCCESS');
 
 		// deploy the contract
@@ -136,37 +136,70 @@ describe('Deployment: ', function() {
 
 		// associate the nft token for Bob
 		// do not associate FT to see if contract will auto associate as planned
+		// do not associate new collection NFT to see if contract will auto associate as planned
 		client.setOperator(bobId, bobPK);
-		result = await associateTokensToAccount(bobId, nftTokenId);
+		result = await associateTokensToAccount(bobId, [legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId]);
 		expect(result).to.be.equal('SUCCESS');
 
 		// send 12 NFTs to Bob
 		client.setOperator(aliceId, alicePK);
-		await sendNFTs(bobId, aliceId, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-		// send 24 NFTs to Operator
-		await sendNFTs(operatorId, aliceId, [13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]);
+		await sendNFTs(bobId, aliceId, generateSerials(1, 12), legacyCollectionNFT_1_TokenId);
+		await sendNFTs(bobId, aliceId, generateSerials(13, 24), legacyCollectionNFT_2_TokenId);
+		await sendNFTs(bobId, aliceId, generateSerials(7, 18), legacyCollectionNFT_3_TokenId);
+		// send 25 NFTs to Operator
+		await sendNFTs(operatorId, aliceId, generateSerials(25, 50), legacyCollectionNFT_1_TokenId);
+		await sendNFTs(operatorId, aliceId, generateSerials(25, 50), legacyCollectionNFT_2_TokenId);
+		await sendNFTs(operatorId, aliceId, generateSerials(25, 50), legacyCollectionNFT_3_TokenId);
+
+		// sent the new NFTs to the contract
+		await sendNFTs(contractId, aliceId, generateSerials(1, 150), newNftTokenId);
 
 		// check Alice NFT balance is 64
-		const [aliceLazyBal, , aliceNFTBalance] = await getAccountBalance(aliceId);
-		expect(aliceNFTBalance).to.be.equal(64);
+		const [aliceLazyBal, , aliceNewNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		expect(aliceNewNFTBalance).to.be.equal(0);
+		expect(aliceLegacy1Bal).to.be.equal(13);
+		expect(aliceLegacy2Bal).to.be.equal(13);
+		expect(aliceLegacy3Bal).to.be.equal(13);
 		expect(aliceLazyBal).to.be.equal(100000);
 	});
 });
 
 describe('Operator sets up the claim amount', function() {
-	it('Should set the claim amount', async function() {
+	it('Should setup the swaps', async function() {
 		// set claim amount
 		client.setOperator(operatorId, operatorKey);
+
+		// set claim $LAZY amount
+		let [result] = await useSetterUint256('updateClaimAmount', 100);
+		expect(result).to.be.equal('SUCCESS');
+
 		const serialList = [];
 		const earnRateList = [];
-		for (let i = 1; i <= 100; i++) {
+		for (let i = 1; i <= 150; i++) {
 			serialList.push(i);
-			const earnRate = i % 5 ? (Math.floor(i / 5) + 1) : (Math.floor(i / 5));
-			earnRateList.push(earnRate * (10 ** TOKEN_DECIMAL));
+			let tokenForConfig, serial;
+			if (i <= 50) {
+				tokenForConfig = legacyCollectionNFT_1_TokenId;
+				serial = i;
+			}
+			else if (i <= 100) {
+				tokenForConfig = legacyCollectionNFT_2_TokenId;
+				serial = i - 50;
+			}
+			else {
+				tokenForConfig = legacyCollectionNFT_3_TokenId;
+				serial = i - 100;
+			}
+			web3.utils.solidutySha3(
+				{ t: 'address', v: tokenForConfig.toSolidityAddress() },
+				{ t: 'uint256', v: serial },
+			);
 		}
-		let [result] = await useSetterUint256Arrays('updateSerialBurnAmount', serialList.slice(0, 50), earnRateList.slice(0, 50));
+		[result] = await useSetterConfig('updateSwapConfig', serialList.slice(0, 50), earnRateList.slice(0, 50));
 		expect(result).to.be.equal('SUCCESS');
-		[result] = await useSetterUint256Arrays('updateSerialBurnAmount', serialList.slice(50), earnRateList.slice(50));
+		[result] = await useSetterConfig('updateSwapConfig', serialList.slice(50, 100), earnRateList.slice(50, 100));
+		expect(result).to.be.equal('SUCCESS');
+		[result] = await useSetterConfig('updateSwapConfig', serialList.slice(100), earnRateList.slice(100));
 		expect(result).to.be.equal('SUCCESS');
 	});
 
@@ -191,14 +224,14 @@ describe('Access Checks: ', function() {
 		}
 		// update FT
 		try {
-			await useSetterAddress('updateLazyToken', tokenId);
+			await useSetterAddress('updateLazyToken', ftTokenId);
 		}
 		catch (err) {
 			errorCount++;
 		}
 		// update claim NFT
 		try {
-			await useSetterAddress('updateBurnToEarnToken', nftTokenId);
+			await useSetterAddress('updateSwapToken', newNftTokenId);
 		}
 		catch (err) {
 			errorCount++;
@@ -212,14 +245,14 @@ describe('Access Checks: ', function() {
 		}
 		// add boost
 		try {
-			await useSetterUint256Arrays('updateSerialBurnAmount', [1], [1]);
+			await useSetterConfig('updateSwapConfig', ['abc'], [1]);
 		}
 		catch (err) {
 			errorCount++;
 		}
 		// remove boost
 		try {
-			await useSetterUint256Array('removeSerialsBurnAmount', [1]);
+			await useSetterUint256Array('removeSwapConfig', ['abc']);
 		}
 		catch (err) {
 			errorCount++;
@@ -247,15 +280,15 @@ describe('Access Checks: ', function() {
 		}
 		try {
 			const lazy = await getSetting('getLazyToken', 'token');
-			expect(TokenId.fromSolidityAddress(lazy).toString() == tokenId.toString()).to.be.true;
+			expect(TokenId.fromSolidityAddress(lazy).toString() == ftTokenId.toString()).to.be.true;
 		}
 		catch (err) {
 			errorCount++;
 			console.log(err);
 		}
 		try {
-			const nft = await getSetting('getBurnToEarnToken', 'token');
-			expect(TokenId.fromSolidityAddress(nft).toString() == nftTokenId.toString()).to.be.true;
+			const nft = await getSetting('getNewSwapToken', 'token');
+			expect(TokenId.fromSolidityAddress(nft).toString() == newNftTokenId.toString()).to.be.true;
 		}
 		catch (err) {
 			errorCount++;
@@ -269,91 +302,146 @@ describe('Access Checks: ', function() {
 			errorCount++;
 			console.log(err);
 		}
-		try {
-			const gasLim = 200000;
-			const params = new ContractFunctionParameters().addUint256Array([1, 2]);
-			const results = await contractExecuteQuery(contractId, gasLim, 'getEarnForSerials', params);
-			// console.log('Earn for serial 1 & 2: ', Number(results['amount']));
-			expect(Number(results['amount'])).to.be.equal(20);
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
-		try {
-			const gasLim = 400000;
-			const params = new ContractFunctionParameters().addUint256(5).addUint256(10);
-			const results = await contractExecuteQuery(contractId, gasLim, 'getSerialPaymentAmounts', params);
-			expect(results[0].length == 5).to.be.true;
-			// console.log('Serials & earn amounts for a small batch', JSON.stringify(results, null, 4));
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
 		expect(errorCount).to.be.equal(0);
 	});
 });
 
 describe('Interaction: ', function() {
-	it('Bob can B2E', async function() {
+	it('Bob can Swap', async function() {
 		client.setOperator(bobId, bobPK);
-		let [result, amt] = await burnToEarnNFTs([1]);
+		const singleSwap = [];
+		singleSwap.push(web3.utils.solidutySha3(
+			{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
+			{ t: 'uint256', v: 1 },
+		));
+		let [result, amt] = await swapTokens(singleSwap);
 		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(10);
-		// check Lazy Balance is now 1
-		let [bobLazyBal, , bobNFTBalance] = await getAccountBalance(bobId);
-		// console.log('Bob Lazy Balance', bobLazyBal);
+		expect(amt).to.be.equal(100);
+		// check Lazy Balance is now 100
+		let [bobLazyBal, , bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal] = await getAccountBalance(bobId);
+		console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
 		expect(bobLazyBal).to.be.equal(10);
-		expect(bobNFTBalance).to.be.equal(11);
+		expect(bobNFTBalance).to.be.equal(1);
+		expect(bobLegacy1Bal).to.be.equal(11);
+		expect(bobLegacy2Bal).to.be.equal(12);
+		expect(bobLegacy3Bal).to.be.equal(12);
 
-		let [aliceLazyBal, , aliceNFTBalance] = await getAccountBalance(aliceId);
+		let [aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
 		expect(aliceLazyBal).to.be.equal(100000 - bobLazyBal);
-		expect(aliceNFTBalance).to.be.equal(65);
+		expect(aliceNFTBalance).to.be.equal(149);
+		expect(aliceLegacy1Bal).to.be.equal(14);
+		expect(aliceLegacy2Bal).to.be.equal(13);
+		expect(aliceLegacy3Bal).to.be.equal(13);
 
-		// now burn 11 NFTs
-		[result, amt] = await burnToEarnNFTs([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+		// now burn 11, 12, 12 NFTs of legacy 1, 2, 3
+		const hashList = [];
+		for (let i = 1; i <= 12; i++) {
+			hashList.push(web3.utils.solidutySha3(
+				{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
+				{ t: 'uint256', v: i },
+			));
+		}
+		for (let i = 13; i <= 24; i++) {
+			hashList.push(web3.utils.solidutySha3(
+				{ t: 'address', v: legacyCollectionNFT_2_TokenId.toSolidityAddress() },
+				{ t: 'uint256', v: i },
+			));
+		}
+		for (let i = 7; i <= 18; i++) {
+			hashList.push(web3.utils.solidutySha3(
+				{ t: 'address', v: legacyCollectionNFT_3_TokenId.toSolidityAddress() },
+				{ t: 'uint256', v: i },
+			));
+		}
+
+		[result, amt] = await swapTokens(hashList);
 		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(200);
-		[bobLazyBal, , bobNFTBalance] = await getAccountBalance(bobId);
-		// console.log('Bob Lazy Balance', bobLazyBal);
-		expect(bobLazyBal).to.be.equal(210);
-		expect(bobNFTBalance).to.be.equal(0);
+		expect(amt).to.be.equal(3500);
+		[bobLazyBal, , bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal] = await getAccountBalance(bobId);
+		console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
+		expect(bobLazyBal).to.be.equal(3600);
+		expect(bobNFTBalance).to.be.equal(36);
+		expect(bobLegacy1Bal).to.be.equal(0);
+		expect(bobLegacy2Bal).to.be.equal(0);
+		expect(bobLegacy3Bal).to.be.equal(0);
 
-		[aliceLazyBal, , aliceNFTBalance] = await getAccountBalance(aliceId);
+		[aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
 		expect(aliceLazyBal).to.be.equal(100000 - bobLazyBal);
-		expect(aliceNFTBalance).to.be.equal(76);
+		expect(aliceNFTBalance).to.be.equal(114);
+		expect(aliceLegacy1Bal).to.be.equal(25);
+		expect(aliceLegacy2Bal).to.be.equal(25);
+		expect(aliceLegacy3Bal).to.be.equal(25);
 
 	});
 
-	it('Operator can B2E', async function() {
+	it('Operator can Swap', async function() {
 		client.setOperator(operatorId, operatorKey);
-		let [result, amt] = await burnToEarnNFTs([13]);
+		const singleSwap = [];
+		singleSwap.push(web3.utils.solidutySha3(
+			{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
+			{ t: 'uint256', v: 25 },
+		));
+		let [result, amt] = await swapTokens(singleSwap);
 		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(30);
-		// check Lazy Balance is now 3
-		let [opLazyBal, , opNFTBalance] = await getAccountBalance(operatorId);
-		// console.log('Operator Lazy Balance', opLazyBal);
-		expect(opLazyBal).to.be.equal(30);
-		expect(opNFTBalance).to.be.equal(23);
+		expect(amt).to.be.equal(100);
+		// check Lazy Balance is now 10
+		let [opLazyBal, , opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal] = await getAccountBalance(operatorId);
+		console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
+		expect(opLazyBal).to.be.equal(100);
+		expect(opNFTBalance).to.be.equal(1);
+		expect(opLegacy1Bal).to.be.equal(24);
+		expect(opLegacy2Bal).to.be.equal(25);
+		expect(opLegacy3Bal).to.be.equal(25);
 
-		let [aliceLazyBal, , aliceNFTBalance] = await getAccountBalance(aliceId);
-		expect(aliceLazyBal).to.be.equal(100000 - 210 - opLazyBal);
-		expect(aliceNFTBalance).to.be.equal(77);
+		let [aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
+		expect(aliceLazyBal).to.be.equal(100000 - 3600 - opLazyBal);
+		expect(aliceNFTBalance).to.be.equal(113);
+		expect(aliceLegacy1Bal).to.be.equal(26);
+		expect(aliceLegacy2Bal).to.be.equal(25);
+		expect(aliceLegacy3Bal).to.be.equal(25);
 
-		// now burn 23 NFTs
-		[result, amt] = await burnToEarnNFTs([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36]);
+		// now burn 24, 25, 25 NFTs of legacy 1, 2, 3
+		const hashList = [];
+		for (let i = 26; i <= 50; i++) {
+			hashList.push(web3.utils.solidutySha3(
+				{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
+				{ t: 'uint256', v: i },
+			));
+		}
+		for (let i = 25; i <= 50; i++) {
+			hashList.push(web3.utils.solidutySha3(
+				{ t: 'address', v: legacyCollectionNFT_2_TokenId.toSolidityAddress() },
+				{ t: 'uint256', v: i },
+			));
+		}
+		for (let i = 25; i <= 50; i++) {
+			hashList.push(web3.utils.solidutySha3(
+				{ t: 'address', v: legacyCollectionNFT_3_TokenId.toSolidityAddress() },
+				{ t: 'uint256', v: i },
+			));
+		}
+
+		[result, amt] = await swapTokens(hashList);
 		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(1240);
-		[opLazyBal, , opNFTBalance] = await getAccountBalance(operatorId);
-		// console.log('Operator Lazy Balance', opLazyBal);
-		expect(opLazyBal).to.be.equal(1270);
-		expect(opNFTBalance).to.be.equal(0);
+		expect(amt).to.be.equal(7400);
+		[opLazyBal, , opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal] = await getAccountBalance(operatorId);
+		console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
+		expect(opLazyBal).to.be.equal(7500);
+		expect(opNFTBalance).to.be.equal(75);
+		expect(opLegacy1Bal).to.be.equal(0);
+		expect(opLegacy2Bal).to.be.equal(0);
+		expect(opLegacy3Bal).to.be.equal(0);
 
-		[aliceLazyBal, , aliceNFTBalance] = await getAccountBalance(aliceId);
-		expect(aliceLazyBal).to.be.equal(100000 - 210 - opLazyBal);
-		expect(aliceNFTBalance).to.be.equal(100);
-
+		[aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
+		expect(aliceLazyBal).to.be.equal(100000 - 3600 - opLazyBal);
+		expect(aliceNFTBalance).to.be.equal(0);
+		expect(aliceLegacy1Bal).to.be.equal(50);
+		expect(aliceLegacy2Bal).to.be.equal(50);
+		expect(aliceLegacy3Bal).to.be.equal(50);
 	});
 
 	after('Retrieve any hbar spent', async function() {
@@ -396,8 +484,22 @@ async function mintFT(acct, key) {
 
 	const tokenCreateSubmit = await tokenCreateTx.execute(client);
 	const tokenCreateRx = await tokenCreateSubmit.getReceipt(client);
-	tokenId = tokenCreateRx.tokenId;
-	console.log('FT Minted:', tokenId.toString());
+	ftTokenId = tokenCreateRx.tokenId;
+	console.log('FT Minted:', ftTokenId.toString());
+}
+
+/**
+ * Generate a list of serials from start to end
+ * @param {Number} start
+ * @param {Number} end
+ * @returns {Number[]}
+ */
+function generateSerials(start, end) {
+	const serials = [];
+	for (let i = start; i <= end; i++) {
+		serials.push(i);
+	}
+	return serials;
 }
 
 /**
@@ -405,17 +507,18 @@ async function mintFT(acct, key) {
  * @param {AccountId} receiverId
  * @param {AccountId} senderId
  * @param {Number[]} serials
+ * @param {TokenId} token
 */
-async function sendNFTs(receiverId, senderId, serials) {
+async function sendNFTs(receiverId, senderId, serials, tokenToUse) {
 	for (let outer = 0; outer < serials.length; outer += 10) {
 		const transferTx = await new TransferTransaction();
 		for (let inner = 0; (inner < 10 && (inner + outer) < serials.length); inner++) {
-			const nft = new NftId(nftTokenId, serials[inner + outer]);
+			const nft = new NftId(tokenToUse, serials[inner + outer]);
 			// console.log('Sending NFT:', nft.toString(), 'to', receiverId.toString(), 'from', senderId.toString());
 			transferTx.addNftTransfer(nft, senderId, receiverId);
 		}
 
-		transferTx.setTransactionMemo('B2E test NFT transfer')
+		transferTx.setTransactionMemo('NFBFTknSwp test NFT transfer')
 			.freezeWith(client);
 
 		// eslint-disable-next-line no-unused-vars
@@ -429,10 +532,10 @@ async function sendNFTs(receiverId, senderId, serials) {
 
 /**
  * Method to encapsulate the staking method to send to graveyard
- * @param {Number[]} serials the list of serials ot stake
+ * @param {string[]} hashed hashed token addres & serials
  * @returns {string} 'SUCCESS' if it worked
  */
-async function burnToEarnNFTs(serials) {
+async function swapTokens(serials) {
 	const params = new ContractFunctionParameters()
 		.addUint256Array(serials);
 	const [stakingRx, contractResults] = await contractExecuteFcn(contractId, 2000000, 'burnNFTToEarn', params);
@@ -451,7 +554,7 @@ async function setFungibleAllowance(spenderAcct, ownerAcct, amount) {
 	// console.log('Spender:', spenderAcct.toString(), ctrcttAsAccount.toString());
 	// console.log('Owner:', ownerAcct.toString(), aliceId.toString());
 	const transaction = new AccountAllowanceApproveTransaction()
-		.approveTokenAllowance(tokenId, ownerAcct, ctrcttAsAccount, amount)
+		.approveTokenAllowance(ftTokenId, ownerAcct, ctrcttAsAccount, amount)
 		.freezeWith(client);
 
 	const txResponse = await transaction.execute(client);
@@ -470,10 +573,10 @@ async function contractDeployFcn(bytecode, gasLim) {
 		.setGas(gasLim)
 		.setConstructorParameters(
 			new ContractFunctionParameters()
-				.addAddress(nftTokenId.toSolidityAddress())
+				.addAddress(newNftTokenId.toSolidityAddress())
 				.addAddress(aliceId.toSolidityAddress())
 				.addAddress(aliceId.toSolidityAddress())
-				.addAddress(tokenId.toSolidityAddress()),
+				.addAddress(ftTokenId.toSolidityAddress()),
 		);
 	const contractCreateSubmit = await contractCreateTx.execute(client);
 	const contractCreateRx = await contractCreateSubmit.getReceipt(client);
@@ -555,13 +658,20 @@ async function accountCreator(privateKey, initialBalance) {
  * Helper function to mint an NFT and a serial on to that token
  * Using royaltyies to test the (potentially) more complicate case
  */
-async function mintNFT() {
+async function mintNFTs() {
+	legacyCollectionNFT_1_TokenId = await mintNFT('NFBFTSwp-NFT-legacy1', 50);
+	legacyCollectionNFT_2_TokenId = await mintNFT('NFBFTSwp-NFT-legacy2', 50);
+	legacyCollectionNFT_3_TokenId = await mintNFT('NFBFTSwp-NFT-legacy3', 50);
+	newNftTokenId = await mintNFT('NFBFTSwp-NFT-newCollection', 150);
+}
+
+async function mintNFT(name, supply) {
 	const tokenCreateTx = new TokenCreateTransaction()
 		.setTokenType(TokenType.NonFungibleUnique)
-		.setTokenName('B2E-NoR_NFT' + aliceId.toString())
-		.setTokenSymbol('B2E-NoR_NFT')
+		.setTokenName(name + aliceId.toString() + new Date().getTime())
+		.setTokenSymbol(name + new Date().getTime())
 		.setInitialSupply(0)
-		.setMaxSupply(100)
+		.setMaxSupply(supply)
 		.setSupplyType(TokenSupplyType.Finite)
 		.setTreasuryAccountId(AccountId.fromString(aliceId))
 		.setAutoRenewAccountId(AccountId.fromString(aliceId))
@@ -579,13 +689,13 @@ async function mintNFT() {
 	});
 
 	/* Get the token ID from the receipt */
-	nftTokenId = createTokenRx.tokenId;
-	console.log('NFT Token ID: ' + nftTokenId.toString());
+	const tokenIdMinted = createTokenRx.tokenId;
+	console.log('NFT Token ID: ' + newNftTokenId.toString());
 
-	// mint up the 100 supply
-	for (let outer = 0; outer < 10; outer++) {
 
-		const tokenMintTx = new TokenMintTransaction().setTokenId(nftTokenId);
+	for (let outer = 0; outer < supply; outer++) {
+
+		const tokenMintTx = new TokenMintTransaction().setTokenId(newNftTokenId);
 
 		for (let i = 0; i < 10; i++) {
 			tokenMintTx.addMetadata(Buffer.from('ipfs://bafybeihbyr6ldwpowrejyzq623lv374kggemmvebdyanrayuviufdhi6xu/metadata.json'));
@@ -595,6 +705,8 @@ async function mintNFT() {
 
 		await tokenMintTx.execute(client);
 	}
+
+	return tokenIdMinted;
 }
 
 /**
@@ -637,20 +749,21 @@ async function getAccountBalance(acctId) {
 
 	const info = await query.execute(client);
 
-	let balance;
 
 	const tokenMap = info.tokenRelationships;
-	let tokenBal = tokenMap.get(tokenId.toString());
+	const balance = await getAccountNFTBalance(tokenMap, ftTokenId);
+	const legacy1 = await getAccountNFTBalance(tokenMap, legacyCollectionNFT_1_TokenId);
+	const legacy2 = await getAccountNFTBalance(tokenMap, legacyCollectionNFT_2_TokenId);
+	const legacy3 = await getAccountNFTBalance(tokenMap, legacyCollectionNFT_3_TokenId);
+	const newNft = await getAccountNFTBalance(tokenMap, newNftTokenId);
 
-	if (tokenBal) {
-		balance = Number(tokenBal.balance);
-	}
-	else {
-		balance = -1;
-	}
 
+	return [balance, info.balance, newNft, legacy1, legacy2, legacy3];
+}
+
+async function getAccountNFTBalance(tokenMap, token) {
 	let nftBal;
-	tokenBal = tokenMap.get(nftTokenId.toString());
+	const tokenBal = tokenMap.get(token.toString());
 	if (tokenBal) {
 		nftBal = Number(tokenBal.balance);
 	}
@@ -658,7 +771,7 @@ async function getAccountBalance(acctId) {
 		nftBal = -1;
 	}
 
-	return [balance, info.balance, nftBal];
+	return nftBal;
 }
 
 /**
@@ -711,6 +824,21 @@ async function useSetterAddress(fcnName, value) {
 /**
  * Generic setter caller
  * @param {string} fcnName
+ * @param {number} int
+ * @returns {string}
+ */
+// eslint-disable-next-line no-unused-vars
+async function useSetterUint256(fcnName, int) {
+	const gasLim = 400000;
+	const params = new ContractFunctionParameters().addUint256(int);
+
+	const [setterIntArrayRx, setterResult] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
+	return [setterIntArrayRx.status.toString(), setterResult];
+}
+
+/**
+ * Generic setter caller
+ * @param {string} fcnName
  * @param {number[]} ints
  * @returns {string}
  */
@@ -726,17 +854,37 @@ async function useSetterUint256Array(fcnName, ints) {
 /**
  * Generic setter caller
  * @param {string} fcnName
+ * @param {string[]} hashes
  * @param {number[]} serials
- * @param {number[]} amounts
  * @returns {string}
  */
 // eslint-disable-next-line no-unused-vars
-async function useSetterUint256Arrays(fcnName, serials, amounts) {
+async function useSetterConfig(fcnName, hashes, serials) {
 	const gasLim = 8000000;
-	const params = new ContractFunctionParameters().addUint256Array(serials).addUint256Array(amounts);
+	const params = [hashes, serials];
 
-	const [setterIntArrayRx, setterResult] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
+	const [setterIntArrayRx, setterResult] = await contractExecuteWithStructArgs(contractId, gasLim, fcnName, params);
 	return [setterIntArrayRx.status.toString(), setterResult];
+}
+
+async function contractExecuteWithStructArgs(cId, gasLim, fcnName, params, amountHbar, clientToUse = client) {
+	// use web3.eth.abi to encode the struct for sending.
+	// console.log('pre-encode:', JSON.stringify(params, null, 4));
+	const functionCallAsUint8Array = await encodeFunctionCall(fcnName, params);
+
+	const contractExecuteTx = await new ContractExecuteTransaction()
+		.setContractId(cId)
+		.setGas(gasLim)
+		.setFunctionParameters(functionCallAsUint8Array)
+		.setPayableAmount(amountHbar)
+		.freezeWith(clientToUse)
+		.execute(clientToUse);
+
+	// get the results of the function call;
+	const record = await contractExecuteTx.getRecord(clientToUse);
+	const contractResults = decodeFunctionResult(fcnName, record.contractFunctionResult.bytes);
+	const contractExecuteRx = await contractExecuteTx.getReceipt(clientToUse);
+	return [contractExecuteRx, contractResults, record];
 }
 
 /**
@@ -792,25 +940,6 @@ async function getSetting(fcnName, expectedVar, gasLim = 100000) {
 	const queryResult = await decodeFunctionResult(fcnName, contractCall.bytes);
 	// console.log('result', queryResult);
 	return queryResult[expectedVar];
-}
-
-/**
- * Helper function for calling the contract methods
- * @param {ContractId} cId the contract to call
- * @param {number | Long.Long} gasLim the max gas
- * @param {string} fcnName name of the function to call
- * @param {ContractFunctionParameters} params the function arguments
- * @returns {[TransactionReceipt, any, TransactionRecord]} the transaction receipt and any decoded results
- */
-async function contractExecuteQuery(cId, gasLim, fcnName, params) {
-	const contractCall = await new ContractCallQuery()
-		.setContractId(cId)
-		.setGas(gasLim)
-		.setFunction(fcnName, params)
-		.setQueryPayment(new Hbar(0.5))
-		.execute(client);
-
-	return decodeFunctionResult(fcnName, contractCall.bytes);
 }
 
 function sleep(ms) {

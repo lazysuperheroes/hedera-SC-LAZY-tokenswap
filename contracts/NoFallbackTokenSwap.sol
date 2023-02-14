@@ -16,8 +16,8 @@ import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 	using EnumerableMap for EnumerableMap.UintToUintMap;
 
-	address private _burnToEarnToken;
-	address private _burnToEarnTokenTreasury;
+	address private _swapToken;
+	address private _swapTokenTreasury;
 	address private _lazyToken;
 	address private _lazySCT;
 
@@ -37,17 +37,19 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
     );
 
     constructor(
-		address burnToEarnToken,
-		address burnToEarnTokenTreasury,
+		address swapToken,
+		address swapTokenTreasury,
 		address lsct, 
 		address lazy) {
 
-		_burnToEarnToken = burnToEarnToken;
-		_burnToEarnTokenTreasury = burnToEarnTokenTreasury;
+		_swapToken = swapToken;
+		_swapTokenTreasury = swapTokenTreasury;
 		_lazyToken = lazy;
 		_lazySCT = lsct;
 
 		_paused = true;
+
+		associateToken(address(this), _swapToken);
     }
 
 	/// @param paused boolean to pause (true) or release (false)
@@ -84,9 +86,9 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		_lazyToken = lazy;
 	}
 
-	function updateBurnToEarnToken(address burnToEarnToken) external onlyOwner {
-		require(burnToEarnToken != address(0), "B2EToken cannot be zero address");
-		_burnToEarnToken = burnToEarnToken;
+	function updateswapToken(address swapToken) external onlyOwner {
+		require(swapToken != address(0), "B2EToken cannot be zero address");
+		_swapToken = swapToken;
 	}
 
 	/// @param serials array of serial numbers of the NFTs to transfer
@@ -123,7 +125,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 					*	contain any not owned it will just fail wasting gas - clear benefit is
 					*	can handle bulk much faster.
 					*/
-					// if (IERC721(_burnToEarnToken).ownerOf(serials[i + inner]) == msg.sender){
+					// if (IERC721(_swapToken).ownerOf(serials[i + inner]) == msg.sender){
 						// calculate amount to send
 						amt += amtToSend;
 
@@ -131,14 +133,14 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 						_serialToAmountMap.remove(serials[i  + inner]);
 
 						// add to lists to transfer it to treasury	
-						receievers[inner] = _burnToEarnTokenTreasury;
+						receievers[inner] = _swapTokenTreasury;
 						senders[inner] = msg.sender;
 						serialsToSend[inner] = SafeCast.toInt64(SafeCast.toInt256(serials[i  + inner]));
 
 						// emit the event
 						emit TokenSwapEvent(
 							msg.sender,
-							_burnToEarnToken,
+							_swapToken,
 							serials[i + inner],
 							amtToSend,
 							_lazyToken,
@@ -148,7 +150,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 				}
 			}
 			// transfer the NFTs
-			responseCode = transferNFTs(_burnToEarnToken, senders, receievers, serialsToSend);
+			responseCode = transferNFTs(_swapToken, senders, receievers, serialsToSend);
 			if (responseCode != HederaResponseCodes.SUCCESS) {
             	revert("B2E NFT Transfer failed");
         	}
@@ -198,8 +200,8 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		}
 	}
 
-	function getBurnToEarnToken() external view returns (address token) {
-		token = _burnToEarnToken;
+	function getswapToken() external view returns (address token) {
+		token = _swapToken;
 	}
 
 	function getLazySCT() external view returns (address sct) {
