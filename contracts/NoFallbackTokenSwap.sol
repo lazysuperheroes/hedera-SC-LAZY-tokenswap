@@ -14,7 +14,8 @@ import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 
 contract NoFallbackTokenSwap is HederaTokenService, Ownable {
-	using EnumerableMap for EnumerableMap.UintToUintMap;
+	using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
+	using SafeCast for uint256;
 
 	address private _swapToken;
 	address private _swapTokenTreasury;
@@ -23,16 +24,16 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 
 	uint256 private _lazyPmtAmt;
 
-	EnumerableMap.UintToUintMap private _serialToAmountMap;
+	EnumerableMap.Bytes32ToUintMap private _hashToSerialMap;
 
 	bool private _paused;
 
 	event TokenSwapEvent(
         address indexed user,
-        address indexed tokenBurnt,
-		uint256 serial,
-		uint256 amount,
-		address indexed tokenEarnt,
+        address indexed oldToken,
+		uint256 oldSerial,
+		address indexed newToken,
+		uint256 newSerial,
         string message
     );
 
@@ -57,23 +58,9 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 	function updatePauseStatus(bool paused) external onlyOwner returns (bool changed) {
 		changed = _paused == paused ? false : true;
 		if (changed) {
-			emit TokenSwapEvent(msg.sender, address(0), 0, 0, address(0), string.concat(paused ? "PAUSED @ " : "UNPAUSED @ ", Strings.toString(block.timestamp)));
+			emit TokenSwapEvent(msg.sender, address(0), 0, address(0), 0, string.concat(paused ? "PAUSED @ " : "UNPAUSED @ ", Strings.toString(block.timestamp)));
 		}
 		_paused = paused;
-	}
-
-	function updateSerialBurnAmount(uint256[] calldata serials, uint256[] calldata amounts) external onlyOwner {
-		require(serials.length == amounts.length, "Serials != amounts length");
-
-		for(uint256 i = 0; i < serials.length; i++) {
-			_serialToAmountMap.set(serials[i], amounts[i]);
-		}	
-	}
-
-	function removeSerialsBurnAmount(uint256[] calldata serials) external onlyOwner {
-		for(uint256 i = 0; i < serials.length; i++) {
-			_serialToAmountMap.remove(serials[i]);
-		}
 	}
 
 	function updateSCT(address sct) external onlyOwner {
@@ -86,35 +73,76 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		_lazyToken = lazy;
 	}
 
-	function updateswapToken(address swapToken) external onlyOwner {
-		require(swapToken != address(0), "B2EToken cannot be zero address");
+	function updateSwapToken(address swapToken) external onlyOwner {
+		require(swapToken != address(0), "New Token cannot be zero address");
 		_swapToken = swapToken;
 	}
 
+	function updateClaimAmount(uint256 amount) external onlyOwner {
+		_lazyPmtAmt = amount;
+	}
+
+	function updateSwapConfig(uint[] calldata newSerials, bytes32[] calldata swapHashes) external onlyOwner {
+		require(newSerials.length == swapHashes.length, "Serials != hashes length");
+
+		for(uint256 i = 0; i < newSerials.length; i++) {
+			_hashToSerialMap.set(swapHashes[i], newSerials[i]);
+		}
+	}
+
+	function removeSwapConfig(bytes32[] calldata swapHashes) external onlyOwner {
+		for(uint256 i = 0; i < swapHashes.length; i++) {
+			_hashToSerialMap.remove(swapHashes[i]);
+		}
+	}
+
+	function getSerials(bytes32[] calldata swapHashes) external view returns (uint256[] memory serials) {
+		serials = new uint256[](swapHashes.length);
+		for(uint256 i = 0; i < swapHashes.length; i++) {
+			serials[i] = _hashToSerialMap.get(swapHashes[i]);
+		}
+	}
+
 	/// @param serials array of serial numbers of the NFTs to transfer
-    function burnNFTToEarn(
+    function swapNFTs(
+		address[] calldata tokensToSwap,
         uint256[] calldata serials
     ) external payable returns (uint amt) {
         require(serials.length <= type(uint8).max, "Too many serials");
+		require(tokensToSwap.length == serials.length, "Tokens != serials");
 		require(!_paused, "Contract is paused");
 		int responseCode;
 
-		// check if user has associated token
-		if(IERC721(_lazyToken).balanceOf(msg.sender) == 0) associateToken(msg.sender, _lazyToken);
+		// if we are going to pay $LAZY
+		// then check if user has associated token
+		if (_lazyPmtAmt > 0) {
+			if(IERC721(_lazyToken).balanceOf(msg.sender) == 0) associateToken(msg.sender, _lazyToken);
+		}
 
-		for(uint256 i = 0; i < serials.length; i += 10) {
-			// outer loop to group transfers efficiently in bundles of 10
-			uint arraySze = Math.min(serials.length - i, 10);
-			address[] memory receievers = new address[](arraySze);
-			address[] memory senders = new address[](arraySze);
-			int64[] memory serialsToSend = new int64[](arraySze);
-			// inner loop to group transfers efficiently in bundles of 10
-			for (uint8 inner = 0; (inner < 10) && (i + inner < serials.length); inner++	) {
+		if (IERC721(_swapToken).balanceOf(msg.sender) == 0) associateToken(msg.sender, _swapToken);
+
+		/* 
+		* each NFT transfer can move 10 serials for a single token ID
+		* the transfer array must be sized correctly with no empty gaps
+		* so we need to iterate through and find the grouping of contiguous token IDs
+		* then head to this method to loop around them in an attempt to be efficient
+		* When sending the swap input we need to ensure we group tokens together
+		*/
+		for(uint256 outer = 0; outer < serials.length; outer += 5) {
+			// outer loop to group transfers efficiently in bundles of 5
+			// 5 old swapped for 5 new -> 10 max per tx
+			uint arraySze = Math.min(serials.length - outer, 5) * 2;
+			IHederaTokenService.TokenTransferList[] memory _transfers = new IHederaTokenService.TokenTransferList[](arraySze);
+			// inner loop to group transfers efficiently in bundles of 5
+			for (uint8 inner = 0; (inner < 5) && (outer + inner < serials.length); inner++	) {
 				// check the NFT is burn eligible
-				(bool found, uint amtToSend) = _serialToAmountMap.tryGet(serials[i + inner]);
+				address tokenToSwap = tokensToSwap[outer + inner];
+				uint serialToSwap = serials[outer + inner];
+				bytes32 swapHash = keccak256(abi.encodePacked(tokenToSwap, serialToSwap));
+				(bool found, uint newSerial) = _hashToSerialMap.tryGet(swapHash);
 				if (found) {
 					/*
-					*	Removing the check if the user owns the serial as each check spawns
+					*	Removed the check if the user owns the serial as each check spawns
 					* 	a seperate child tx and there is a 50 child tx limit. The benefit of
 					*	having this is that a contract badly specified can still work. e.g 
 					*	users has 10 serials to burn but just sold one and clicks the button
@@ -125,34 +153,49 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 					*	contain any not owned it will just fail wasting gas - clear benefit is
 					*	can handle bulk much faster.
 					*/
-					// if (IERC721(_swapToken).ownerOf(serials[i + inner]) == msg.sender){
-						// calculate amount to send
-						amt += amtToSend;
 
-						// update the record
-						_serialToAmountMap.remove(serials[i  + inner]);
+					// calculate amount to send
+					amt += _lazyPmtAmt;
 
-						// add to lists to transfer it to treasury	
-						receievers[inner] = _swapTokenTreasury;
-						senders[inner] = msg.sender;
-						serialsToSend[inner] = SafeCast.toInt64(SafeCast.toInt256(serials[i  + inner]));
+					// update the record
+					_hashToSerialMap.remove(swapHash);
 
-						// emit the event
-						emit TokenSwapEvent(
-							msg.sender,
-							_swapToken,
-							serials[i + inner],
-							amtToSend,
-							_lazyToken,
-							"Burn2Earn"
-						);
-					// }
+					_transfers[inner * 2].token = tokenToSwap;
+					_transfers[inner * 2].nftTransfers = new IHederaTokenService.NftTransfer[](1);
+
+					IHederaTokenService.NftTransfer memory _nftTransferOld;
+					_nftTransferOld.senderAccountID = msg.sender;
+					_nftTransferOld.receiverAccountID = _swapTokenTreasury;
+					_nftTransferOld.serialNumber = int64(serialToSwap.toUint64());
+					_transfers[inner * 2].nftTransfers[0] = _nftTransferOld;
+
+					_transfers[inner * 2 + 1].token = _swapToken;
+					_transfers[inner * 2 + 1].nftTransfers = new IHederaTokenService.NftTransfer[](1);
+
+					IHederaTokenService.NftTransfer memory _nftTransferNew;
+					_nftTransferNew.senderAccountID = address(this);
+					_nftTransferNew.receiverAccountID = msg.sender;
+					_nftTransferNew.serialNumber = int64(newSerial.toUint64());
+					_transfers[inner * 2 + 1].nftTransfers[0] = _nftTransferNew;
+
+					// emit the event
+					emit TokenSwapEvent(
+						msg.sender,
+						tokenToSwap,
+						serialToSwap,
+						_swapToken,
+						newSerial,
+						"Swapped"
+					);
+				}
+				else {
+					revert(string.concat("Config Not found ", Strings.toHexString(uint256(uint160(tokenToSwap)), 20), " /#", Strings.toString(serials[outer + inner])));
 				}
 			}
 			// transfer the NFTs
-			responseCode = transferNFTs(_swapToken, senders, receievers, serialsToSend);
+			responseCode = HederaTokenService.cryptoTransfer(_transfers);
 			if (responseCode != HederaResponseCodes.SUCCESS) {
-            	revert("B2E NFT Transfer failed");
+            	revert("TokenSwap NFT Transfer failed");
         	}
 		}
 
@@ -167,40 +210,19 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 
         emit TokenSwapEvent(
             msg.sender,
-			address(0),
-			0,
-            amt,
+			_lazySCT,
+            0,
 			_lazyToken,
+			amt,
 			"$LAZY sent"
         );
 
         if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert("B2E FT Transfer failed");
+            revert("TokenSwap FT Transfer failed");
         }
     }
 
-	function getEarnForSerials(uint256[] calldata serials) external view returns (uint256 amount) {
-		for(uint256 i = 0; i < serials.length; i++) {
-			bool found;
-			uint256 amt;
-			(found, amt) = _serialToAmountMap.tryGet(serials[i]);
-			if (found) amount += amt;
-		}
-	}
-
-	function getSerialPaymentAmounts(uint batch, uint offset) external view returns (uint256[] memory serials, uint256[] memory amounts) {
-		require(offset < (_serialToAmountMap.length() - batch), "Offset out of range");
-		uint size = Math.min(batch, _serialToAmountMap.length());
-		
-		serials = new uint256[](size);
-		amounts = new uint256[](size);
-
-		for(uint i = 0; i < size; i++) {
-			(serials[i], amounts[i]) = _serialToAmountMap.at(i + offset);
-		}
-	}
-
-	function getswapToken() external view returns (address token) {
+	function getNewSwapToken() external view returns (address token) {
 		token = _swapToken;
 	}
 
@@ -233,8 +255,8 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 			receiverAddress,
 			address(0),
 			amount,
-			0,
 			address(0),
+			0,
 			"Hbar Transfer Complete"
 		);
     }
@@ -244,8 +266,8 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 			msg.sender,
 			address(0),
 			msg.value,
-			0,
 			address(0),
+			0,
 			"Hbar Received by Contract"
 		);
     }
@@ -255,8 +277,8 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 			msg.sender,
 			address(0),
 			msg.value,
-			0,
 			address(0),
+			0,
 			"Fallback Called"
 		);
     }

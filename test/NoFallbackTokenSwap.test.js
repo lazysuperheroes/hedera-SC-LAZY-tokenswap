@@ -37,7 +37,7 @@ require('dotenv').config();
 // Get operator from .env file
 const operatorKey = PrivateKey.fromString(process.env.PRIVATE_KEY);
 const operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-const contractName = 'LegacyNoRoyaltyB2E';
+const contractName = process.env.CONTRACT_NAME ?? null;
 const env = process.env.ENVIRONMENT ?? null;
 const TOKEN_DECIMAL = 1;
 
@@ -126,7 +126,7 @@ describe('Deployment: ', function() {
 
 		// set allowance for the contract for the FT
 		client.setOperator(aliceId, alicePK);
-		await setFungibleAllowance(contractId, aliceId, 5000);
+		await setFungibleAllowance(contractId, aliceId, 50000);
 
 		// create Bob account
 		client.setOperator(operatorId, operatorKey);
@@ -147,12 +147,14 @@ describe('Deployment: ', function() {
 		await sendNFTs(bobId, aliceId, generateSerials(13, 24), legacyCollectionNFT_2_TokenId);
 		await sendNFTs(bobId, aliceId, generateSerials(7, 18), legacyCollectionNFT_3_TokenId);
 		// send 25 NFTs to Operator
-		await sendNFTs(operatorId, aliceId, generateSerials(25, 50), legacyCollectionNFT_1_TokenId);
-		await sendNFTs(operatorId, aliceId, generateSerials(25, 50), legacyCollectionNFT_2_TokenId);
-		await sendNFTs(operatorId, aliceId, generateSerials(25, 50), legacyCollectionNFT_3_TokenId);
+		await sendNFTs(operatorId, aliceId, generateSerials(26, 50), legacyCollectionNFT_1_TokenId);
+		await sendNFTs(operatorId, aliceId, generateSerials(26, 50), legacyCollectionNFT_2_TokenId);
+		await sendNFTs(operatorId, aliceId, generateSerials(26, 50), legacyCollectionNFT_3_TokenId);
 
 		// sent the new NFTs to the contract
 		await sendNFTs(contractId, aliceId, generateSerials(1, 150), newNftTokenId);
+
+		await sleep(2000);
 
 		// check Alice NFT balance is 64
 		const [aliceLazyBal, , aliceNewNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
@@ -173,10 +175,10 @@ describe('Operator sets up the claim amount', function() {
 		let [result] = await useSetterUint256('updateClaimAmount', 100);
 		expect(result).to.be.equal('SUCCESS');
 
-		const serialList = [];
-		const earnRateList = [];
+		const newSerialList = [];
+		const swapHashList = [];
 		for (let i = 1; i <= 150; i++) {
-			serialList.push(i);
+			newSerialList.push(i);
 			let tokenForConfig, serial;
 			if (i <= 50) {
 				tokenForConfig = legacyCollectionNFT_1_TokenId;
@@ -190,16 +192,16 @@ describe('Operator sets up the claim amount', function() {
 				tokenForConfig = legacyCollectionNFT_3_TokenId;
 				serial = i - 100;
 			}
-			web3.utils.solidutySha3(
+			swapHashList.push(web3.utils.soliditySha3(
 				{ t: 'address', v: tokenForConfig.toSolidityAddress() },
 				{ t: 'uint256', v: serial },
-			);
+			));
 		}
-		[result] = await useSetterConfig('updateSwapConfig', serialList.slice(0, 50), earnRateList.slice(0, 50));
+		[result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(0, 50), swapHashList.slice(0, 50));
 		expect(result).to.be.equal('SUCCESS');
-		[result] = await useSetterConfig('updateSwapConfig', serialList.slice(50, 100), earnRateList.slice(50, 100));
+		[result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(50, 100), swapHashList.slice(50, 100));
 		expect(result).to.be.equal('SUCCESS');
-		[result] = await useSetterConfig('updateSwapConfig', serialList.slice(100), earnRateList.slice(100));
+		[result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(100), swapHashList.slice(100));
 		expect(result).to.be.equal('SUCCESS');
 	});
 
@@ -243,16 +245,22 @@ describe('Access Checks: ', function() {
 		catch (err) {
 			errorCount++;
 		}
-		// add boost
+		// add config
 		try {
-			await useSetterConfig('updateSwapConfig', ['abc'], [1]);
+			await useSetterConfig('updateSwapConfig', [1], [web3.utils.soliditySha3(
+				{ t: 'address', v: newNftTokenId.toSolidityAddress() },
+				{ t: 'uint256', v: 99999 },
+			)]);
 		}
 		catch (err) {
 			errorCount++;
 		}
-		// remove boost
+		// remove config
 		try {
-			await useSetterUint256Array('removeSwapConfig', ['abc']);
+			await useSetterBytes32Array('removeSwapConfig', [web3.utils.soliditySha3(
+				{ t: 'address', v: newNftTokenId.toSolidityAddress() },
+				{ t: 'uint256', v: 99999 },
+			)]);
 		}
 		catch (err) {
 			errorCount++;
@@ -302,6 +310,15 @@ describe('Access Checks: ', function() {
 			errorCount++;
 			console.log(err);
 		}
+		try {
+			const newSerialList = await getSerials([legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId], [1, 1]);
+			// console.log('newSerialList: ', newSerialList);
+			expect(newSerialList.length == 2).to.be.true;
+		}
+		catch (err) {
+			errorCount++;
+			console.log(err);
+		}
 		expect(errorCount).to.be.equal(0);
 	});
 });
@@ -309,139 +326,133 @@ describe('Access Checks: ', function() {
 describe('Interaction: ', function() {
 	it('Bob can Swap', async function() {
 		client.setOperator(bobId, bobPK);
-		const singleSwap = [];
-		singleSwap.push(web3.utils.solidutySha3(
-			{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
-			{ t: 'uint256', v: 1 },
-		));
-		let [result, amt] = await swapTokens(singleSwap);
+		let [result, amt] = await swapTokens([legacyCollectionNFT_1_TokenId.toSolidityAddress()], [1], 1_850_000);
 		expect(result).to.be.equal('SUCCESS');
 		expect(amt).to.be.equal(100);
+		await sleep(2000);
 		// check Lazy Balance is now 100
 		let [bobLazyBal, , bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal] = await getAccountBalance(bobId);
-		console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
-		expect(bobLazyBal).to.be.equal(10);
+		// console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
+		expect(bobLazyBal).to.be.equal(100);
 		expect(bobNFTBalance).to.be.equal(1);
 		expect(bobLegacy1Bal).to.be.equal(11);
 		expect(bobLegacy2Bal).to.be.equal(12);
 		expect(bobLegacy3Bal).to.be.equal(12);
 
 		let [aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
+		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
 		expect(aliceLazyBal).to.be.equal(100000 - bobLazyBal);
-		expect(aliceNFTBalance).to.be.equal(149);
 		expect(aliceLegacy1Bal).to.be.equal(14);
 		expect(aliceLegacy2Bal).to.be.equal(13);
 		expect(aliceLegacy3Bal).to.be.equal(13);
 
+		// check contract balance
+		let [, contractNFTBalance] = await getContractBalance(contractId);
+		expect(contractNFTBalance).to.be.equal(149);
+
 		// now burn 11, 12, 12 NFTs of legacy 1, 2, 3
-		const hashList = [];
-		for (let i = 1; i <= 12; i++) {
-			hashList.push(web3.utils.solidutySha3(
-				{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
-				{ t: 'uint256', v: i },
-			));
+		const tokenAddressList = [];
+		const serialList = [];
+		for (let i = 2; i <= 12; i++) {
+			tokenAddressList.push(legacyCollectionNFT_1_TokenId.toSolidityAddress());
+			serialList.push(i);
 		}
 		for (let i = 13; i <= 24; i++) {
-			hashList.push(web3.utils.solidutySha3(
-				{ t: 'address', v: legacyCollectionNFT_2_TokenId.toSolidityAddress() },
-				{ t: 'uint256', v: i },
-			));
+			tokenAddressList.push(legacyCollectionNFT_2_TokenId.toSolidityAddress());
+			serialList.push(i);
 		}
 		for (let i = 7; i <= 18; i++) {
-			hashList.push(web3.utils.solidutySha3(
-				{ t: 'address', v: legacyCollectionNFT_3_TokenId.toSolidityAddress() },
-				{ t: 'uint256', v: i },
-			));
+			tokenAddressList.push(legacyCollectionNFT_3_TokenId.toSolidityAddress());
+			serialList.push(i);
 		}
 
-		[result, amt] = await swapTokens(hashList);
+		[result, amt] = await swapTokens(tokenAddressList, serialList);
 		expect(result).to.be.equal('SUCCESS');
 		expect(amt).to.be.equal(3500);
+		await sleep(2000);
 		[bobLazyBal, , bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal] = await getAccountBalance(bobId);
-		console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
+		// console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
 		expect(bobLazyBal).to.be.equal(3600);
 		expect(bobNFTBalance).to.be.equal(36);
 		expect(bobLegacy1Bal).to.be.equal(0);
 		expect(bobLegacy2Bal).to.be.equal(0);
 		expect(bobLegacy3Bal).to.be.equal(0);
 
+		// eslint-disable-next-line no-unused-vars
 		[aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
+		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
 		expect(aliceLazyBal).to.be.equal(100000 - bobLazyBal);
-		expect(aliceNFTBalance).to.be.equal(114);
 		expect(aliceLegacy1Bal).to.be.equal(25);
 		expect(aliceLegacy2Bal).to.be.equal(25);
 		expect(aliceLegacy3Bal).to.be.equal(25);
+
+		[, contractNFTBalance] = await getContractBalance(contractId);
+		expect(contractNFTBalance).to.be.equal(114);
 
 	});
 
 	it('Operator can Swap', async function() {
 		client.setOperator(operatorId, operatorKey);
-		const singleSwap = [];
-		singleSwap.push(web3.utils.solidutySha3(
-			{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
-			{ t: 'uint256', v: 25 },
-		));
-		let [result, amt] = await swapTokens(singleSwap);
+		let [result, amt] = await swapTokens([legacyCollectionNFT_1_TokenId.toSolidityAddress()], [26], 1_850_000);
 		expect(result).to.be.equal('SUCCESS');
 		expect(amt).to.be.equal(100);
+		await sleep(3000);
 		// check Lazy Balance is now 10
 		let [opLazyBal, , opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal] = await getAccountBalance(operatorId);
-		console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
+		// console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
 		expect(opLazyBal).to.be.equal(100);
 		expect(opNFTBalance).to.be.equal(1);
 		expect(opLegacy1Bal).to.be.equal(24);
 		expect(opLegacy2Bal).to.be.equal(25);
 		expect(opLegacy3Bal).to.be.equal(25);
 
-		let [aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
+		let [aliceLazyBal, , , aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
 		expect(aliceLazyBal).to.be.equal(100000 - 3600 - opLazyBal);
-		expect(aliceNFTBalance).to.be.equal(113);
 		expect(aliceLegacy1Bal).to.be.equal(26);
 		expect(aliceLegacy2Bal).to.be.equal(25);
 		expect(aliceLegacy3Bal).to.be.equal(25);
 
+		let [, contractNFTBalance] = await getContractBalance(contractId);
+		expect(contractNFTBalance).to.be.equal(113);
+
 		// now burn 24, 25, 25 NFTs of legacy 1, 2, 3
-		const hashList = [];
+		const tokenAddressList = [];
+		const serialList = [];
+		for (let i = 27; i <= 50; i++) {
+			tokenAddressList.push(legacyCollectionNFT_1_TokenId.toSolidityAddress());
+			serialList.push(i);
+		}
 		for (let i = 26; i <= 50; i++) {
-			hashList.push(web3.utils.solidutySha3(
-				{ t: 'address', v: legacyCollectionNFT_1_TokenId.toSolidityAddress() },
-				{ t: 'uint256', v: i },
-			));
+			tokenAddressList.push(legacyCollectionNFT_2_TokenId.toSolidityAddress());
+			serialList.push(i);
 		}
-		for (let i = 25; i <= 50; i++) {
-			hashList.push(web3.utils.solidutySha3(
-				{ t: 'address', v: legacyCollectionNFT_2_TokenId.toSolidityAddress() },
-				{ t: 'uint256', v: i },
-			));
-		}
-		for (let i = 25; i <= 50; i++) {
-			hashList.push(web3.utils.solidutySha3(
-				{ t: 'address', v: legacyCollectionNFT_3_TokenId.toSolidityAddress() },
-				{ t: 'uint256', v: i },
-			));
+		for (let i = 26; i <= 50; i++) {
+			tokenAddressList.push(legacyCollectionNFT_3_TokenId.toSolidityAddress());
+			serialList.push(i);
 		}
 
-		[result, amt] = await swapTokens(hashList);
+		[result, amt] = await swapTokens(tokenAddressList, serialList);
 		expect(result).to.be.equal('SUCCESS');
 		expect(amt).to.be.equal(7400);
+		await sleep(2000);
 		[opLazyBal, , opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal] = await getAccountBalance(operatorId);
-		console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
+		// console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
 		expect(opLazyBal).to.be.equal(7500);
 		expect(opNFTBalance).to.be.equal(75);
 		expect(opLegacy1Bal).to.be.equal(0);
 		expect(opLegacy2Bal).to.be.equal(0);
 		expect(opLegacy3Bal).to.be.equal(0);
 
-		[aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
+		[aliceLazyBal, , , aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
 		expect(aliceLazyBal).to.be.equal(100000 - 3600 - opLazyBal);
-		expect(aliceNFTBalance).to.be.equal(0);
 		expect(aliceLegacy1Bal).to.be.equal(50);
 		expect(aliceLegacy2Bal).to.be.equal(50);
 		expect(aliceLegacy3Bal).to.be.equal(50);
+
+		[, contractNFTBalance] = await getContractBalance(contractId);
+		expect(contractNFTBalance).to.be.equal(39);
 	});
 
 	after('Retrieve any hbar spent', async function() {
@@ -532,13 +543,20 @@ async function sendNFTs(receiverId, senderId, serials, tokenToUse) {
 
 /**
  * Method to encapsulate the staking method to send to graveyard
- * @param {string[]} hashed hashed token addres & serials
+ * @param {string[]} tokenAddresses in solidity format
+ * @param {Number[]} serials serials
+ * @param {Number} gasBoost gas boost to add to the gas limit
  * @returns {string} 'SUCCESS' if it worked
  */
-async function swapTokens(serials) {
+async function swapTokens(tokenAddresses, serials, gasBoost = 0) {
+	// console.log('Swapping tokens:', tokenAddresses, serials, 'gasBoost:', gasBoost);
+	const gasLim = 400_000 + ((serials.length - (serials.length % 5)) / 5 * 300_000) + gasBoost;
+	// console.log('Gas Limit:', gasLim);
+
 	const params = new ContractFunctionParameters()
+		.addAddressArray(tokenAddresses)
 		.addUint256Array(serials);
-	const [stakingRx, contractResults] = await contractExecuteFcn(contractId, 2000000, 'burnNFTToEarn', params);
+	const [stakingRx, contractResults] = await contractExecuteFcn(contractId, gasLim, 'swapNFTs', params);
 	return [stakingRx.status.toString(), Number(contractResults['amt'])];
 }
 
@@ -690,12 +708,12 @@ async function mintNFT(name, supply) {
 
 	/* Get the token ID from the receipt */
 	const tokenIdMinted = createTokenRx.tokenId;
-	console.log('NFT Token ID: ' + newNftTokenId.toString());
+	console.log('NFT Token ID: ' + tokenIdMinted.toString());
 
 
 	for (let outer = 0; outer < supply; outer++) {
 
-		const tokenMintTx = new TokenMintTransaction().setTokenId(newNftTokenId);
+		const tokenMintTx = new TokenMintTransaction().setTokenId(tokenIdMinted);
 
 		for (let i = 0; i < 10; i++) {
 			tokenMintTx.addMetadata(Buffer.from('ipfs://bafybeihbyr6ldwpowrejyzq623lv374kggemmvebdyanrayuviufdhi6xu/metadata.json'));
@@ -785,7 +803,10 @@ async function getContractBalance() {
 
 	const info = await query.execute(client);
 
-	return [info.balance];
+	const tokenMap = info.tokenRelationships;
+	const newNft = await getAccountNFTBalance(tokenMap, newNftTokenId);
+
+	return [info.balance, newNft];
 }
 
 /**
@@ -839,13 +860,12 @@ async function useSetterUint256(fcnName, int) {
 /**
  * Generic setter caller
  * @param {string} fcnName
- * @param {number[]} ints
+ * @param {number[]} bytesArray
  * @returns {string}
  */
-// eslint-disable-next-line no-unused-vars
-async function useSetterUint256Array(fcnName, ints) {
+async function useSetterBytes32Array(fcnName, bytesArray) {
 	const gasLim = 8000000;
-	const params = new ContractFunctionParameters().addUint256Array(ints);
+	const params = new ContractFunctionParameters().addBytes32Array(bytesArray);
 
 	const [setterIntArrayRx, setterResult] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
 	return [setterIntArrayRx.status.toString(), setterResult];
@@ -934,12 +954,45 @@ async function getSetting(fcnName, expectedVar, gasLim = 100000) {
 	const contractCall = await new ContractCallQuery()
 		.setContractId(contractId)
 		.setFunctionParameters(functionCallAsUint8Array)
-		.setMaxQueryPayment(new Hbar(2))
+		.setQueryPayment(new Hbar(1))
 		.setGas(gasLim)
 		.execute(client);
 	const queryResult = await decodeFunctionResult(fcnName, contractCall.bytes);
 	// console.log('result', queryResult);
 	return queryResult[expectedVar];
+}
+
+/**
+ * Helper function to get the current settings of the contract
+ * @param {String[]} tokenList the name of the getter to call
+ * @param {Number[]} serials the variable to exeppect to get back
+ * @param {number=300_000} gasLim allows gas overide
+ * @return {*}
+ */
+// eslint-disable-next-line no-unused-vars
+async function getSerials(tokenList, serials, gasLim = 300_000) {
+	const fcnName = 'getSerials';
+	const hashList = [];
+	for (let i = 0; i < tokenList.length; i++) {
+		const hash = web3.utils.soliditySha3(
+			{ t: 'address', v: tokenList[i].toSolidityAddress() },
+			{ t: 'uint256', v: serials[i] },
+		);
+		// console.log(tokenList[i].toString(), '/#', serials[i], '->', hash);
+		hashList.push(hash);
+	}
+
+	const functionCallAsUint8Array = await encodeFunctionCall(fcnName, [hashList]);
+
+	// query the contract
+	const contractCall = await new ContractCallQuery()
+		.setContractId(contractId)
+		.setFunctionParameters(functionCallAsUint8Array)
+		.setQueryPayment(new Hbar(1))
+		.setGas(gasLim)
+		.execute(client);
+	const queryResult = await decodeFunctionResult(fcnName, contractCall.bytes);
+	return queryResult['serials'];
 }
 
 function sleep(ms) {
