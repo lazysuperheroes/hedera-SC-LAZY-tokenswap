@@ -6,6 +6,7 @@ const {
 	Hbar,
 	ContractCallQuery,
 	ContractFunctionParameters,
+	ContractExecuteTransaction,
 } = require('@hashgraph/sdk');
 require('dotenv').config();
 const fs = require('fs');
@@ -33,22 +34,15 @@ const main = async () => {
 
 	const args = process.argv.slice(2);
 	if (args.length != 1 || getArgFlag('h')) {
-		console.log('Usage: checkClaimableAmount.js X,Y,Z');
-		console.log('		X,Y,Z are the serials to claim');
+		console.log('Usage: setLazyClaimAmount.js X');
+		console.log('		The amount of $LAZY per claim (add the decimal)');
 		return;
 	}
-
-	const serials = args[0].split(',');
 
 	console.log('\n-Using ENIVRONMENT:', env);
 	console.log('\n-Using Operator:', operatorId.toString());
 	console.log('\n-Using Contract:', contractId.toString());
 
-	const proceed = readlineSync.keyInYNStrict('Do you want to check the B2E ratefor serial(s): ' + serials + '?');
-	if (!proceed) {
-		console.log('User Aborted');
-		return;
-	}
 
 	if (env.toUpperCase() == 'TEST') {
 		client = Client.forTestnet();
@@ -70,25 +64,37 @@ const main = async () => {
 	abi = json.abi;
 	console.log('\n -Loading ABI...\n');
 
-	// check-out the deployed script - test read-only method
-	const queryResult = await checkClaimable('getEarnForSerials', serials);
-	console.log('Claimable:', Number(queryResult['amount']));
-};
+	let resObj = await contractExecuteQuery(contractId, 50_000, 'getClaimAmount', new ContractFunctionParameters());
 
+	console.log('Current setting:', resObj['amt']);
+
+	const proceed = readlineSync.keyInYNStrict('Do you want to update the amount of $LAZY given: ' + args[0] + '?');
+	if (!proceed) {
+		console.log('User Aborted');
+		return;
+	}
+
+	const [result] = await useSetterUint256('updateClaimAmount', Number(args[0]));
+	console.log('Result:', result);
+
+	resObj = await contractExecuteQuery(contractId, 50_000, 'getClaimAmount', new ContractFunctionParameters());
+
+	console.log('Current setting:', resObj['amt']);
+};
 
 /**
  * Generic setter caller
  * @param {string} fcnName
- * @param {number[]} ints
+ * @param {number} int
  * @returns {string}
  */
 // eslint-disable-next-line no-unused-vars
-async function checkClaimable(fcnName, ints) {
-	const gasLim = 50000 + 10000 * (ints.length - 1);
-	const queryCost = new Hbar(0.0075 * ints.length);
-	const params = new ContractFunctionParameters().addUint256Array(ints);
+async function useSetterUint256(fcnName, int) {
+	const gasLim = 200_000;
+	const params = new ContractFunctionParameters().addUint256(int);
 
-	return await contractExecuteQuery(contractId, gasLim, fcnName, params, queryCost);
+	const [setterIntArrayRx, setterResult] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
+	return [setterIntArrayRx.status.toString(), setterResult];
 }
 
 /**
@@ -97,9 +103,33 @@ async function checkClaimable(fcnName, ints) {
  * @param {number | Long.Long} gasLim the max gas
  * @param {string} fcnName name of the function to call
  * @param {ContractFunctionParameters} params the function arguments
- * @returns {[TransactionReceipt, any, TransactionRecord]} the transaction receipt and any decoded results
+ * @param {string | number | Hbar | Long.Long | BigNumber} amountHbar the amount of hbar to send in the methos call
+ * @returns {[TransactionReceipt, any]} the transaction receipt and any decoded results
  */
-async function contractExecuteQuery(cId, gasLim, fcnName, params, queryCost = new Hbar(0.001)) {
+async function contractExecuteFcn(cId, gasLim, fcnName, params, amountHbar) {
+	const contractExecuteTx = await new ContractExecuteTransaction()
+		.setContractId(cId)
+		.setGas(gasLim)
+		.setFunction(fcnName, params)
+		.setPayableAmount(amountHbar)
+		.execute(client);
+
+	// get the results of the function call;
+	const record = await contractExecuteTx.getRecord(client);
+	const contractResults = decodeFunctionResult(fcnName, record.contractFunctionResult.bytes);
+	const contractExecuteRx = await contractExecuteTx.getReceipt(client);
+	return [contractExecuteRx, contractResults];
+}
+
+
+/**
+ * Helper function for calling the contract methods
+ * @param {ContractId} cId the contract to call
+ * @param {number | Long.Long} gasLim the max gas
+ * @param {string} fcnName name of the function to call
+ * @param {ContractFunctionParameters} params the function arguments
+ */
+async function contractExecuteQuery(cId, gasLim, fcnName, params, queryCost = new Hbar(0.1)) {
 	const contractCall = await new ContractCallQuery()
 		.setContractId(cId)
 		.setGas(gasLim)

@@ -96,6 +96,10 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		}
 	}
 
+	function getClaimAmount() external view returns (uint256 amt) {
+		amt = _lazyPmtAmt;
+	}
+
 	function getSerials(bytes32[] calldata swapHashes) external view returns (uint256[] memory serials) {
 		serials = new uint256[](swapHashes.length);
 		for(uint256 i = 0; i < swapHashes.length; i++) {

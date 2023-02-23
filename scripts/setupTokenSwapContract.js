@@ -110,9 +110,10 @@ const main = async () => {
 	const execute = readlineSync.keyInYNStrict('Do wish to push config to the contract?');
 	if (execute) {
 		for (let i = 0; i < newSerialList.length; i += BATCH) {
-			console.log('Processing batch', i, '-', i + BATCH - 1);
-			const [result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(i, i + BATCH), swapHashList.slice(i, i + BATCH));
-			console.log('Tx', i, '-', i + BATCH, ':', result);
+			const topEnd = i + Math.min(BATCH, newSerialList.length - i);
+			console.log('Processing batch', i, '-', topEnd - 1);
+			const [result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(i, topEnd), swapHashList.slice(i, topEnd));
+			console.log('Tx', i, '-', topEnd, ':', result);
 		}
 	}
 };
