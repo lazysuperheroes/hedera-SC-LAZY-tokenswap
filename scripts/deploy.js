@@ -17,8 +17,8 @@ const operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
 const contractName = process.env.CONTRACT_NAME ?? null;
 const env = process.env.ENVIRONMENT ?? null;
 
-const b2eToken = TokenId.fromString(process.env.B2E_TOKEN) ?? null;
-const b2eTreasury = AccountId.fromString(process.env.B2E_TREASURY) ?? null;
+const newToken = TokenId.fromString(process.env.SWAP_TOKEN) ?? null;
+const tokenTreasury = AccountId.fromString(process.env.TOKEN_TREASURY) ?? null;
 const lazySCT = AccountId.fromString(process.env.LAZY_CONTRACT) ?? null;
 const lazyToken = TokenId.fromString(process.env.LAZY_TOKEN) ?? null;
 
@@ -30,8 +30,8 @@ async function contractDeployFcn(bytecode, gasLim) {
 		.setGas(gasLim)
 		.setConstructorParameters(
 			new ContractFunctionParameters()
-				.addAddress(b2eToken.toSolidityAddress())
-				.addAddress(b2eTreasury.toSolidityAddress())
+				.addAddress(newToken.toSolidityAddress())
+				.addAddress(tokenTreasury.toSolidityAddress())
 				.addAddress(lazySCT.toSolidityAddress())
 				.addAddress(lazyToken.toSolidityAddress()),
 		);
@@ -54,8 +54,8 @@ const main = async () => {
 	console.log('\n-Deploying Contract:', contractName);
 	console.log('\n-Using LSCT:', lazySCT.toString());
 	console.log('\n-Using LazyToken:', lazyToken.toString());
-	console.log('\nUsing B2E Token:', b2eToken.toString());
-	console.log('\nUsing B2E Treasury:', b2eTreasury.toString());
+	console.log('\nUsing New Token:', newToken.toString());
+	console.log('\nUsing Old Token Treasury:', tokenTreasury.toString());
 
 	if (env.toUpperCase() == 'TEST') {
 		client = Client.forTestnet();

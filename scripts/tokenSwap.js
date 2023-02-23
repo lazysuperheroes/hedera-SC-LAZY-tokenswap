@@ -7,6 +7,7 @@ const {
 	ContractExecuteTransaction,
 	ContractCallQuery,
 	ContractFunctionParameters,
+	TokenId,
 } = require('@hashgraph/sdk');
 require('dotenv').config();
 const fs = require('fs');
@@ -28,13 +29,20 @@ let client;
 // check-out the deployed script - test read-only method
 const main = async () => {
 	const args = process.argv.slice(2);
-	if (args.length != 1 || getArgFlag('h')) {
-		console.log('Usage: burn2Earn.js X,Y,Z');
-		console.log('		X,Y,Z are the serials to claim');
+	if (args.length != 2 || getArgFlag('h')) {
+		console.log('Usage: tokenSwap.js 0.0.XXX,0.0.YYY X,Y,Z');
+		console.log('		0.0.XXX,0.0.YYY are the tokens to swap in same order as the serials');
+		console.log('		X,Y,Z are the serials to swap in same order as the tokenIds');
 		return;
 	}
 
-	const serials = args[0].split(',');
+	const tokens = args[0].split(',');
+	const serials = args[1].split(',');
+
+	if (tokens.length != serials.length) {
+		console.log('ERROR: Must have same number of tokens as serials');
+		return;
+	}
 
 	if (contractName === undefined || contractName == null) {
 		console.log('Environment required, please specify CONTRACT_NAME for ABI in the .env file');
@@ -45,7 +53,12 @@ const main = async () => {
 	console.log('\n-Using Operator:', operatorId.toString());
 	console.log('\n-Using Contract:', contractId.toString());
 
-	const proceed = readlineSync.keyInYNStrict('Do you want to pull the faucet for serial(s): ' + serials + '?');
+	for (let i = 0; i < tokens.length; i++) {
+		console.log('\tToken:', tokens[i], 'Serial:', serials[i]);
+		tokens[i] = TokenId.fromString(tokens[i]).toSolidityAddress();
+	}
+
+	const proceed = readlineSync.keyInYNStrict('Do you want to swap the tokens?');
 	if (!proceed) {
 		console.log('User Aborted');
 		return;
@@ -71,10 +84,28 @@ const main = async () => {
 	abi = json.abi;
 	console.log('\n -Loading ABI...\n');
 
-	const [, uintAmtClaim] = await useSetterUint256Array('burnNFTToEarn', serials);
-	console.log('Claimed:', Number(uintAmtClaim[0]));
+	const [, uintAmtClaim] = await swapTokens(tokens, serials);
+	console.log('Claimed:', uintAmtClaim);
 };
 
+/**
+ * Method to encapsulate the staking method to send to graveyard
+ * @param {string[]} tokenAddresses in solidity format
+ * @param {Number[]} serials serials
+ * @param {Number} gasBoost gas boost to add to the gas limit
+ * @returns {string} 'SUCCESS' if it worked
+ */
+async function swapTokens(tokenAddresses, serials, gasBoost = 0) {
+	// console.log('Swapping tokens:', tokenAddresses, serials, 'gasBoost:', gasBoost);
+	const gasLim = 400_000 + ((serials.length - (serials.length % 5)) / 5 * 300_000) + gasBoost;
+	// console.log('Gas Limit:', gasLim);
+
+	const params = new ContractFunctionParameters()
+		.addAddressArray(tokenAddresses)
+		.addUint256Array(serials);
+	const [stakingRx, contractResults] = await contractExecuteFcn(contractId, gasLim, 'swapNFTs', params);
+	return [stakingRx.status.toString(), Number(contractResults['amt'])];
+}
 
 /**
  * Generic setter caller
