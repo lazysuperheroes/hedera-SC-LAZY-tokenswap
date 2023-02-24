@@ -79,7 +79,7 @@ const main = async () => {
 	const execute = readlineSync.keyInYNStrict('Do wish to deploy?');
 	if (execute) {
 		console.log('\n- Deploying contract...', contractName);
-		const gasLimit = 800000;
+		const gasLimit = 1_800_000;
 
 		const [contractId, contractAddress] = await contractDeployFcn(contractBytecode, gasLimit);
 

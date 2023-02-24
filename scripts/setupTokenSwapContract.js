@@ -127,7 +127,7 @@ const main = async () => {
  */
 // eslint-disable-next-line no-unused-vars
 async function useSetterConfig(fcnName, hashes, serials) {
-	const gasLim = 8000000;
+	const gasLim = 6_000_000;
 	const params = [hashes, serials];
 
 	const [setterIntArrayRx, setterResult] = await contractExecuteWithStructArgs(contractId, gasLim, fcnName, params);

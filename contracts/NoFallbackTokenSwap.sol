@@ -50,7 +50,11 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 
 		_paused = true;
 
-		associateToken(address(this), _swapToken);
+		int responseCode = associateToken(address(this), _swapToken);
+
+		if (responseCode != HederaResponseCodes.SUCCESS) {
+            revert("Associating Swap Token failed");
+        }
     }
 
 	/// @param paused boolean to pause (true) or release (false)
@@ -76,6 +80,10 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 	function updateSwapToken(address swapToken) external onlyOwner {
 		require(swapToken != address(0), "New Token cannot be zero address");
 		_swapToken = swapToken;
+
+		// associate the new token with this contract
+		// not checking for success as it will fail if already associated
+		associateToken(address(this), _swapToken);
 	}
 
 	function updateClaimAmount(uint256 amount) external onlyOwner {
