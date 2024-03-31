@@ -1,32 +1,36 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity >=0.8.12 <0.9.0;
 
-import "./HederaResponseCodes.sol";
-import "./HederaTokenService.sol";
+import {HederaResponseCodes} from "./HederaResponseCodes.sol";
+import {HederaTokenService} from "./HederaTokenService.sol";
+import {IHederaTokenService} from "./interfaces/IHederaTokenService.sol";
+
+import {ILazyGasStation} from "./interfaces/ILazyGasStation.sol";
 
 // Import OpenZeppelin Contracts where needed
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/utils/math/SafeCast.sol";
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
-import "@openzeppelin/contracts/utils/math/Math.sol";
-import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {EnumerableMap} from "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
 
 contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 	using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
 	using SafeCast for uint256;
 
-	address private _swapToken;
-	address private _swapTokenTreasury;
-	address private _lazyToken;
-	address private _lazySCT;
+	error BadInput();
+	error ConfigNotFound(address token, uint256 serial);
 
-	uint256 private _lazyPmtAmt;
+	address public swapToken;
+	address public swapTokenTreasury;
+	address public lazyToken;
+	ILazyGasStation public lazyGasStation;
 
-	EnumerableMap.Bytes32ToUintMap private _hashToSerialMap;
+	uint256 public lazyPmtAmt;
 
-	bool private _paused;
+	EnumerableMap.Bytes32ToUintMap private hashToSerialMap;
+
+	bool public paused;
 
 	event TokenSwapEvent(
         address indexed user,
@@ -38,80 +42,82 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
     );
 
     constructor(
-		address swapToken,
-		address swapTokenTreasury,
-		address lsct, 
-		address lazy) {
+		address _swapToken,
+		address _swapTokenTreasury,
+		address _lgs, 
+		address _lazy) {
 
-		_swapToken = swapToken;
-		_swapTokenTreasury = swapTokenTreasury;
-		_lazyToken = lazy;
-		_lazySCT = lsct;
+		swapToken = _swapToken;
+		swapTokenTreasury = _swapTokenTreasury;
+		lazyToken = _lazy;
+		lazyGasStation = ILazyGasStation(_lgs);
 
-		_paused = true;
+		paused = true;
 
-		int responseCode = associateToken(address(this), _swapToken);
+		int256 responseCode = associateToken(address(this), _swapToken);
 
 		if (responseCode != HederaResponseCodes.SUCCESS) {
             revert("Associating Swap Token failed");
         }
     }
 
-	/// @param paused boolean to pause (true) or release (false)
+	/// @param _paused boolean to pause (true) or release (false)
 	/// @return changed indicative of whether a change was made
-	function updatePauseStatus(bool paused) external onlyOwner returns (bool changed) {
+	function updatePauseStatus(bool _paused) external onlyOwner returns (bool changed) {
 		changed = _paused == paused ? false : true;
 		if (changed) {
-			emit TokenSwapEvent(msg.sender, address(0), 0, address(0), 0, string.concat(paused ? "PAUSED @ " : "UNPAUSED @ ", Strings.toString(block.timestamp)));
+			emit TokenSwapEvent(msg.sender, address(0), 0, address(0), 0, paused ? "PAUSED" : "UNPAUSED");
 		}
-		_paused = paused;
+		paused = _paused;
 	}
 
-	function updateSCT(address sct) external onlyOwner {
-		require(sct != address(0), "SCT cannot be zero address");
-		_lazySCT = sct;
+	function updateLGS(address _lgs) external onlyOwner {
+		if (_lgs == address(0)) revert BadInput();
+		lazyGasStation = ILazyGasStation(_lgs);
 	}
 
-	function updateLazyToken(address lazy) external onlyOwner {
-		require(lazy != address(0), "Lazy cannot be zero address");
-		_lazyToken = lazy;
+	function updateLazyToken(address _lazy) external onlyOwner {
+		if (_lazy == address(0)) revert BadInput();
+		lazyToken = _lazy;
 	}
 
-	function updateSwapToken(address swapToken) external onlyOwner {
-		require(swapToken != address(0), "New Token cannot be zero address");
-		_swapToken = swapToken;
+	function updateSwapToken(address _swapToken) external onlyOwner {
+		if (_swapToken == address(0)) revert BadInput();
+		swapToken = _swapToken;
 
 		// associate the new token with this contract
 		// not checking for success as it will fail if already associated
-		associateToken(address(this), _swapToken);
+		associateToken(address(this), swapToken);
 	}
 
-	function updateClaimAmount(uint256 amount) external onlyOwner {
-		_lazyPmtAmt = amount;
+	function updateClaimAmount(uint256 _amount) external onlyOwner {
+		lazyPmtAmt = _amount;
 	}
 
-	function updateSwapConfig(uint[] calldata newSerials, bytes32[] calldata swapHashes) external onlyOwner {
-		require(newSerials.length == swapHashes.length, "Serials != hashes length");
+	function updateSwapConfig(uint256[] calldata newSerials, bytes32[] calldata swapHashes) external onlyOwner {
+		if (newSerials.length != swapHashes.length) revert BadInput();
 
-		for(uint256 i = 0; i < newSerials.length; i++) {
-			_hashToSerialMap.set(swapHashes[i], newSerials[i]);
+		uint256 length = newSerials.length;
+		for(uint256 i = 0; i < length;) {
+			hashToSerialMap.set(swapHashes[i], newSerials[i]);
+			unchecked { ++i; }
 		}
 	}
 
-	function removeSwapConfig(bytes32[] calldata swapHashes) external onlyOwner {
-		for(uint256 i = 0; i < swapHashes.length; i++) {
-			_hashToSerialMap.remove(swapHashes[i]);
+	function removeSwapConfig(bytes32[] calldata _swapHashes) external onlyOwner {
+		uint256 length = _swapHashes.length;
+		for(uint256 i = 0; i < length;) {
+			hashToSerialMap.remove(_swapHashes[i]);
+			unchecked { ++i; }
 		}
-	}
-
-	function getClaimAmount() external view returns (uint256 amt) {
-		amt = _lazyPmtAmt;
 	}
 
 	function getSerials(bytes32[] calldata swapHashes) external view returns (uint256[] memory serials) {
 		serials = new uint256[](swapHashes.length);
-		for(uint256 i = 0; i < swapHashes.length; i++) {
-			serials[i] = _hashToSerialMap.get(swapHashes[i]);
+		uint256 length = swapHashes.length;
+		for(uint256 i = 0; i < length; ) {
+			serials[i] = hashToSerialMap.get(swapHashes[i]);
+			unchecked { ++i; }
 		}
 	}
 
@@ -119,19 +125,11 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
     function swapNFTs(
 		address[] calldata tokensToSwap,
         uint256[] calldata serials
-    ) external payable returns (uint amt) {
+    ) external payable returns (uint256 amt) {
         require(serials.length <= type(uint8).max, "Too many serials");
 		require(tokensToSwap.length == serials.length, "Tokens != serials");
-		require(!_paused, "Contract is paused");
-		int responseCode;
-
-		// if we are going to pay $LAZY
-		// then check if user has associated token
-		if (_lazyPmtAmt > 0) {
-			if(IERC721(_lazyToken).balanceOf(msg.sender) == 0) associateToken(msg.sender, _lazyToken);
-		}
-
-		if (IERC721(_swapToken).balanceOf(msg.sender) == 0) associateToken(msg.sender, _swapToken);
+		require(!paused, "Contract is paused");
+		int256 responseCode;
 
 		/* 
 		* each NFT transfer can move 10 serials for a single token ID
@@ -143,15 +141,15 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		for(uint256 outer = 0; outer < serials.length; outer += 5) {
 			// outer loop to group transfers efficiently in bundles of 5
 			// 5 old swapped for 5 new -> 10 max per tx
-			uint arraySze = Math.min(serials.length - outer, 5) * 2;
+			uint256 arraySze = Math.min(serials.length - outer, 5) * 2;
 			IHederaTokenService.TokenTransferList[] memory _transfers = new IHederaTokenService.TokenTransferList[](arraySze);
 			// inner loop to group transfers efficiently in bundles of 5
 			for (uint8 inner = 0; (inner < 5) && (outer + inner < serials.length); inner++	) {
 				// check the NFT is burn eligible
 				address tokenToSwap = tokensToSwap[outer + inner];
-				uint serialToSwap = serials[outer + inner];
+				uint256 serialToSwap = serials[outer + inner];
 				bytes32 swapHash = keccak256(abi.encodePacked(tokenToSwap, serialToSwap));
-				(bool found, uint newSerial) = _hashToSerialMap.tryGet(swapHash);
+				(bool found, uint256 newSerial) = hashToSerialMap.tryGet(swapHash);
 				if (found) {
 					/*
 					*	Removed the check if the user owns the serial as each check spawns
@@ -167,21 +165,21 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 					*/
 
 					// calculate amount to send
-					amt += _lazyPmtAmt;
+					amt += lazyPmtAmt;
 
 					// update the record
-					_hashToSerialMap.remove(swapHash);
+					hashToSerialMap.remove(swapHash);
 
 					_transfers[inner * 2].token = tokenToSwap;
 					_transfers[inner * 2].nftTransfers = new IHederaTokenService.NftTransfer[](1);
 
 					IHederaTokenService.NftTransfer memory _nftTransferOld;
 					_nftTransferOld.senderAccountID = msg.sender;
-					_nftTransferOld.receiverAccountID = _swapTokenTreasury;
+					_nftTransferOld.receiverAccountID = swapTokenTreasury;
 					_nftTransferOld.serialNumber = int64(serialToSwap.toUint64());
 					_transfers[inner * 2].nftTransfers[0] = _nftTransferOld;
 
-					_transfers[inner * 2 + 1].token = _swapToken;
+					_transfers[inner * 2 + 1].token = swapToken;
 					_transfers[inner * 2 + 1].nftTransfers = new IHederaTokenService.NftTransfer[](1);
 
 					IHederaTokenService.NftTransfer memory _nftTransferNew;
@@ -195,13 +193,13 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 						msg.sender,
 						tokenToSwap,
 						serialToSwap,
-						_swapToken,
+						swapToken,
 						newSerial,
 						"Swapped"
 					);
 				}
 				else {
-					revert(string.concat("Config Not found ", Strings.toHexString(uint256(uint160(tokenToSwap)), 20), " /#", Strings.toString(serials[outer + inner])));
+					revert ConfigNotFound(tokenToSwap, serials[outer + inner]);
 				}
 			}
 			// transfer the NFTs
@@ -213,42 +211,18 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 
 		// send the lazy to the user
 		if (amt == 0) return 0;
-        responseCode = this.transferFrom(
-            _lazyToken,
-            _lazySCT,
-            msg.sender,
-            amt
-        );
+
+		uint256 paid = lazyGasStation.payoutLazy(msg.sender, amt, 0);
+		if (paid != amt) revert("TokenSwap FT Transfer failed");
 
         emit TokenSwapEvent(
             msg.sender,
-			_lazySCT,
+			address(lazyGasStation),
             0,
-			_lazyToken,
+			lazyToken,
 			amt,
 			"$LAZY sent"
         );
-
-        if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert("TokenSwap FT Transfer failed");
-        }
-    }
-
-	function getNewSwapToken() external view returns (address token) {
-		token = _swapToken;
-	}
-
-	function getLazySCT() external view returns (address sct) {
-		sct = _lazySCT;
-	}
-
-	function getLazyToken() external view returns (address token) {
-		token = _lazyToken;
-	}
-
-	/// @return paused unit of time for a claim.
-    function getPauseStatus() external view returns (bool paused) {
-    	paused = _paused;
     }
 
     // Transfer hbar oput of the contract - using secure ether transfer pattern
@@ -260,8 +234,9 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
         external
         onlyOwner
     {
-        // throws error on failure
-        receiverAddress.transfer(amount);
+        if (receiverAddress == address(0) || amount == 0) revert BadInput();
+
+        Address.sendValue(receiverAddress, amount);
 
 		emit TokenSwapEvent(
 			receiverAddress,

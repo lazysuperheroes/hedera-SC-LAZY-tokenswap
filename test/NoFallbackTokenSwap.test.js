@@ -2,62 +2,81 @@ const {
 	Client,
 	AccountId,
 	PrivateKey,
-	ContractCreateFlow,
-	ContractFunctionParameters,
-	ContractCallQuery,
 	Hbar,
-	ContractExecuteTransaction,
-	AccountCreateTransaction,
-	TokenCreateTransaction,
-	TokenType,
-	TokenSupplyType,
 	HbarUnit,
-	AccountInfoQuery,
 	// eslint-disable-next-line no-unused-vars
 	TransactionReceipt,
-	TransferTransaction,
 	// eslint-disable-next-line no-unused-vars
 	TokenId,
-	ContractInfoQuery,
-	TokenMintTransaction,
 	// eslint-disable-next-line no-unused-vars
 	ContractId,
-	TokenAssociateTransaction,
-	AccountAllowanceApproveTransaction,
-	NftId,
+	ContractFunctionParameters,
 } = require('@hashgraph/sdk');
 const fs = require('fs');
-const Web3 = require('web3');
-const web3 = new Web3();
+const { ethers } = require('ethers');
 const { expect } = require('chai');
-const { describe, it, after } = require('mocha');
+const { describe, it } = require('mocha');
+const {
+	checkMirrorHbarBalance,
+	checkMirrorBalance,
+	checkLastMirrorEvent,
+} = require('../utils/hederaMirrorHelpers');
+const { sleep } = require('../utils/nodeHelpers');
+const {
+	contractDeployFunction,
+	contractExecuteFunction,
+	contractExecuteQuery,
+	readOnlyEVMFromMirrorNode,
+} = require('../utils/solidityHelpers');
+const {
+	accountCreator,
+	associateTokensToAccount,
+	mintNFT,
+	sendNFT,
+	sendHbar,
+	sweepHbar,
+	setNFTAllowanceAll,
+	clearNFTAllowances,
+} = require('../utils/hederaHelpers');
+const { fail } = require('assert');
 
 require('dotenv').config();
 
 // Get operator from .env file
-const operatorKey = PrivateKey.fromString(process.env.PRIVATE_KEY);
-const operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-const contractName = process.env.CONTRACT_NAME ?? null;
+let operatorKey;
+let operatorId;
+try {
+	operatorKey = PrivateKey.fromStringED25519(process.env.PRIVATE_KEY);
+	operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
+}
+catch (err) {
+	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
+}
+
+const contractName = 'NoFallbackTokenSwap';
+const lazyGasStationName = 'LazyGasStation';
 const env = process.env.ENVIRONMENT ?? null;
-const TOKEN_DECIMAL = 1;
+const LAZY_DECIMAL = process.env.LAZY_DECIMALS ?? 1;
+const LAZY_MAX_SUPPLY = process.env.LAZY_MAX_SUPPLY ?? 250_000_000;
+const lazyContractCreator = 'LAZYTokenCreator';
 
 const addressRegex = /(\d+\.\d+\.[1-9]\d+)/i;
 
 // reused variable
 let contractId;
 let contractAddress;
-let abi;
+let nfbtsIface;
 let alicePK, aliceId;
 let bobPK, bobId;
-let ftTokenId, newNftTokenId, legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId;
+let newNftTokenId, legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId;
 let client;
+let lazyIface;
+let lazyTokenId, lazySCT;
+let lazyGasStationIface, lazyGasStationId;
+const operatorNftAllowances = [];
 
 describe('Deployment: ', function() {
 	it('Should deploy the contract and setup conditions', async function() {
-		if (contractName === undefined || contractName == null) {
-			console.log('Environment required, please specify CONTRACT_NAME for ABI in the .env file');
-			process.exit(1);
-		}
 		if (operatorKey === undefined || operatorKey == null || operatorId === undefined || operatorId == null) {
 			console.log('Environment required, please specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
 			process.exit(1);
@@ -73,47 +92,262 @@ describe('Deployment: ', function() {
 			client = Client.forMainnet();
 			console.log('testing in *MAINNET*');
 		}
+		else if (env.toUpperCase() == 'PREVIEW') {
+			client = Client.forPreviewnet();
+			console.log('testing in *PREVIEWNET*');
+		}
+		else if (env.toUpperCase() == 'LOCAL') {
+			const node = { '127.0.0.1:50211': new AccountId(3) };
+			client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
+			console.log('testing in *LOCAL*');
+			const rootId = AccountId.fromString('0.0.2');
+			const rootKey = PrivateKey.fromStringECDSA(
+				'302e020100300506032b65700422042091132178e72057a1d7528025956fe39b0b847f200ab59b2fdd367017f3087137',
+			);
+
+			// create an operator account on the local node and use this for testing as operator
+			client.setOperator(rootId, rootKey);
+			operatorKey = PrivateKey.generateED25519();
+			operatorId = await accountCreator(client, operatorKey, 1000);
+		}
 		else {
-			console.log('ERROR: Must specify either MAIN or TEST as environment in .env file');
+			console.log(
+				'ERROR: Must specify either MAIN or TEST or PREVIEW or LOCAL as environment in .env file',
+			);
 			return;
 		}
 
 		client.setOperator(operatorId, operatorKey);
+		// deploy the contract
+		console.log('\n-Using Operator:', operatorId.toString());
 
 		console.log('\n-Testing:', contractName);
 		// create Alice account
-		alicePK = PrivateKey.generateED25519();
-		aliceId = await accountCreator(alicePK, 500);
-		console.log('Alice account ID:', aliceId.toString(), '\nkey:', alicePK.toString());
+		if (process.env.ALICE_ACCOUNT_ID && process.env.ALICE_PRIVATE_KEY) {
+			aliceId = AccountId.fromString(process.env.ALICE_ACCOUNT_ID);
+			alicePK = PrivateKey.fromStringED25519(process.env.ALICE_PRIVATE_KEY);
+			console.log('\n-Using existing Alice:', aliceId.toString());
+
+			await sendHbar(client, operatorId, aliceId, 250, HbarUnit.Hbar);
+		}
+		else {
+			alicePK = PrivateKey.generateED25519();
+			aliceId = await accountCreator(client, alicePK, 250);
+			console.log(
+				'Alice account ID:',
+				aliceId.toString(),
+				'\nkey:',
+				alicePK.toString(),
+			);
+		}
+		expect(aliceId.toString().match(addressRegex).length == 2).to.be.true;
+
+		// create Bob account
+		if (process.env.BOB_ACCOUNT_ID && process.env.BOB_PRIVATE_KEY) {
+			bobId = AccountId.fromString(process.env.BOB_ACCOUNT_ID);
+			bobPK = PrivateKey.fromStringED25519(process.env.BOB_PRIVATE_KEY);
+			console.log('\n-Using existing Bob:', bobId.toString());
+
+			// send Bob some hbars
+			await sendHbar(client, operatorId, bobId, 50, HbarUnit.Hbar);
+		}
+		else {
+			bobPK = PrivateKey.generateED25519();
+			bobId = await accountCreator(client, bobPK, 50);
+			console.log(
+				'Bob account ID:',
+				bobId.toString(),
+				'\nkey:',
+				bobPK.toString(),
+			);
+		}
+		expect(bobId.toString().match(addressRegex).length == 2).to.be.true;
 
 		client.setOperator(aliceId, alicePK);
-		// mint an FT to act as $LAZY
-		await mintFT(aliceId, alicePK);
 		// mint three legacy NFT collections from Alice account of 50 serials
 		// mint one new collection of 150 serials to swap into
-		await mintNFTs();
 
-		client.setOperator(operatorId, operatorKey);
-		// associate FT/NFT to operator
-		let result = await associateTokensToAccount(operatorId, [ftTokenId]);
+		client.setOperator(aliceId, alicePK);
+		let result;
+		[result, legacyCollectionNFT_1_TokenId] = await mintNFT(
+			client,
+			aliceId,
+			'NFBFTSwp-NFT-legacy1',
+			'NFBFTSwp1',
+			50,
+			50,
+			null,
+			null,
+			true,
+		);
 		expect(result).to.be.equal('SUCCESS');
-		result = await associateTokensToAccount(operatorId, [newNftTokenId, legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId]);
+
+		[result, legacyCollectionNFT_2_TokenId] = await mintNFT(
+			client,
+			aliceId,
+			'NFBFTSwp-NFT-legacy2',
+			'NFBFTSwp2',
+			50,
+			50,
+			null,
+			null,
+			true,
+		);
+		expect(result).to.be.equal('SUCCESS');
+
+		[result, legacyCollectionNFT_3_TokenId] = await mintNFT(
+			client,
+			aliceId,
+			'NFBFTSwp-NFT-legacy3',
+			'NFBFTSwp3',
+			50,
+			50,
+			null,
+			null,
+			true,
+		);
+		expect(result).to.be.equal('SUCCESS');
+
+		[result, newNftTokenId] = await mintNFT(
+			client,
+			aliceId,
+			'NFBFTSwp-NFT-newCollection',
+			'NFBFTSwpNew',
+			150,
+			50,
+			null,
+			null,
+			true,
+		);
 		expect(result).to.be.equal('SUCCESS');
 
 		// deploy the contract
 		console.log('\n-Using Operator:', operatorId.toString());
 
+		client.setOperator(operatorId, operatorKey);
+
+		// check if LAZY SCT has been deployed
+		const lazyJson = JSON.parse(
+			fs.readFileSync(
+				`./artifacts/contracts/legacy/${lazyContractCreator}.sol/${lazyContractCreator}.json`,
+			),
+		);
+
+		// import ABIs
+		lazyIface = new ethers.Interface(lazyJson.abi);
+
+		const lazyContractBytecode = lazyJson.bytecode;
+
+		let lazyDeploySkipped = false;
+		if (process.env.LAZY_SCT_CONTRACT_ID && process.env.LAZY_TOKEN_ID) {
+			console.log(
+				'\n-Using existing LAZY SCT:',
+				process.env.LAZY_SCT_CONTRACT_ID,
+			);
+			lazySCT = ContractId.fromString(process.env.LAZY_SCT_CONTRACT_ID);
+
+			lazyDeploySkipped = true;
+
+			lazyTokenId = TokenId.fromString(process.env.LAZY_TOKEN_ID);
+			console.log('\n-Using existing LAZY Token ID:', lazyTokenId.toString());
+		}
+		else {
+			const gasLimit = 800_000;
+
+			console.log(
+				'\n- Deploying contract...',
+				lazyContractCreator,
+				'\n\tgas@',
+				gasLimit,
+			);
+
+			[lazySCT] = await contractDeployFunction(client, lazyContractBytecode);
+
+			console.log(
+				`Lazy Token Creator contract created with ID: ${lazySCT} / ${lazySCT.toSolidityAddress()}`,
+			);
+
+			expect(lazySCT.toString().match(addressRegex).length == 2).to.be.true;
+
+			// mint the $LAZY FT
+			await mintLazy(
+				'Test_Lazy',
+				'TLazy',
+				'Test Lazy FT',
+				LAZY_MAX_SUPPLY * 10 ** LAZY_DECIMAL,
+				LAZY_DECIMAL,
+				LAZY_MAX_SUPPLY * 10 ** LAZY_DECIMAL,
+				30,
+			);
+			console.log('$LAZY Token minted:', lazyTokenId.toString());
+		}
+
+		expect(lazySCT.toString().match(addressRegex).length == 2).to.be.true;
+		expect(lazyTokenId.toString().match(addressRegex).length == 2).to.be.true;
+
+		const lazyGasStationJSON = JSON.parse(
+			fs.readFileSync(
+				`./artifacts/contracts/${lazyGasStationName}.sol/${lazyGasStationName}.json`,
+			),
+		);
+
+		lazyGasStationIface = new ethers.Interface(lazyGasStationJSON.abi);
+		if (process.env.LAZY_GAS_STATION_CONTRACT_ID) {
+			console.log(
+				'\n-Using existing Lazy Gas Station:',
+				process.env.LAZY_GAS_STATION_CONTRACT_ID,
+			);
+			lazyGasStationId = ContractId.fromString(
+				process.env.LAZY_GAS_STATION_CONTRACT_ID,
+			);
+		}
+		else {
+			const gasLimit = 1_500_000;
+			console.log(
+				'\n- Deploying contract...',
+				lazyGasStationName,
+				'\n\tgas@',
+				gasLimit,
+			);
+
+			const lazyGasStationBytecode = lazyGasStationJSON.bytecode;
+
+			const lazyGasStationParams = new ContractFunctionParameters()
+				.addAddress(lazyTokenId.toSolidityAddress())
+				.addAddress(lazySCT.toSolidityAddress());
+
+			[lazyGasStationId] = await contractDeployFunction(
+				client,
+				lazyGasStationBytecode,
+				gasLimit,
+				lazyGasStationParams,
+			);
+
+			console.log(
+				`Lazy Gas Station contract created with ID: ${lazyGasStationId} / ${lazyGasStationId.toSolidityAddress()}`,
+			);
+
+			expect(lazyGasStationId.toString().match(addressRegex).length == 2).to.be
+				.true;
+		}
+
+
 		const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`));
 
-		// import ABI
-		abi = json.abi;
+		nfbtsIface = new ethers.Interface(json.abi);
 
 		const contractBytecode = json.bytecode;
-		const gasLimit = 1000000;
+		const gasLimit = 1_100_000;
 
 		console.log('\n- Deploying contract...', contractName, '\n\tgas@', gasLimit);
 
-		await contractDeployFcn(contractBytecode, gasLimit);
+		const constructorParams = new ContractFunctionParameters()
+			.addAddress(newNftTokenId.toSolidityAddress())
+			.addAddress(aliceId.toSolidityAddress())
+			.addAddress(lazyGasStationId.toSolidityAddress())
+			.addAddress(lazyTokenId.toSolidityAddress());
+
+		[contractId, contractAddress] = await contractDeployFunction(client, contractBytecode, gasLimit, constructorParams);
 
 		console.log(`Contract created with ID: ${contractId} / ${contractAddress}`);
 
@@ -122,47 +356,144 @@ describe('Deployment: ', function() {
 		console.log('\n-Testing:', contractName);
 
 		// send 1 hbar to the contract.
-		await hbarTransferFcn(operatorId, operatorKey, contractId, 5);
+		await sendHbar(client, operatorId, AccountId.fromString(contractId.toString()), 1, HbarUnit.Hbar);
 
-		// set allowance for the contract for the FT
-		client.setOperator(aliceId, alicePK);
-		await setFungibleAllowance(contractId, aliceId, 50000);
+		const operatorTokensToAssociate = [];
+		if (!lazyDeploySkipped) {
+			operatorTokensToAssociate.push(lazyTokenId);
+		}
+		operatorTokensToAssociate.push(
+			legacyCollectionNFT_1_TokenId,
+			legacyCollectionNFT_2_TokenId,
+			legacyCollectionNFT_3_TokenId,
+			newNftTokenId,
+		);
 
-		// create Bob account
-		client.setOperator(operatorId, operatorKey);
-		bobPK = PrivateKey.generateED25519();
-		bobId = await accountCreator(bobPK, 200);
-		console.log('Bob account ID:', bobId.toString(), '\nkey:', bobPK.toString());
+		result = await associateTokensToAccount(
+			client,
+			operatorId,
+			operatorKey,
+			operatorTokensToAssociate,
+		);
+
+		expect(result).to.be.equal('SUCCESS');
+
+		// v2.0 move to LGS vs. direct allowance
+		// await setLSCTAllowance(50_000);
+
+		// associate the token for Alice
+		// alice has the NFTs already associated
+
+		// check the balance of lazy tokens for Alice from mirror node
+		const aliceLazyBalance = await checkMirrorBalance(
+			env,
+			aliceId,
+			lazyTokenId,
+		);
+
+		if (!aliceLazyBalance) {
+			result = await associateTokensToAccount(client, aliceId, alicePK, [
+				lazyTokenId,
+			]);
+			expect(result).to.be.equal('SUCCESS');
+		}
 
 		// associate the nft token for Bob
-		// do not associate FT to see if contract will auto associate as planned
-		// do not associate new collection NFT to see if contract will auto associate as planned
-		client.setOperator(bobId, bobPK);
-		result = await associateTokensToAccount(bobId, [legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId]);
+		// check the balance of lazy tokens for Bob from mirror node
+		const bobLazyBalance = await checkMirrorBalance(env, bobId, lazyTokenId);
+
+		const bobTokensToAssociate = [];
+		if (!bobLazyBalance) {
+			bobTokensToAssociate.push(lazyTokenId);
+		}
+
+		bobTokensToAssociate.push(
+			legacyCollectionNFT_1_TokenId,
+			legacyCollectionNFT_2_TokenId,
+			legacyCollectionNFT_3_TokenId,
+			newNftTokenId,
+		);
+
+		// associate the tokens for Bob
+		result = await associateTokensToAccount(
+			client,
+			bobId,
+			bobPK,
+			bobTokensToAssociate,
+		);
+		expect(result).to.be.equal('SUCCESS');
+
+		// send $LAZY to all accounts
+		client.setOperator(operatorId, operatorKey);
+		result = await sendLazy(operatorId, 100);
+		expect(result).to.be.equal('SUCCESS');
+		result = await sendLazy(aliceId, 100);
+		expect(result).to.be.equal('SUCCESS');
+		result = await sendLazy(bobId, 100);
+		expect(result).to.be.equal('SUCCESS');
+
+		// send $LAZY to the Lazy Gas Station
+		// gas station will fuel payouts so ensure it has enough
+		result = await sendLazy(lazyGasStationId, 100_000);
 		expect(result).to.be.equal('SUCCESS');
 
 		// send 12 NFTs to Bob
 		client.setOperator(aliceId, alicePK);
-		await sendNFTs(bobId, aliceId, generateSerials(1, 12), legacyCollectionNFT_1_TokenId);
-		await sendNFTs(bobId, aliceId, generateSerials(13, 24), legacyCollectionNFT_2_TokenId);
-		await sendNFTs(bobId, aliceId, generateSerials(7, 18), legacyCollectionNFT_3_TokenId);
+		await sendNFT(client, aliceId, bobId, legacyCollectionNFT_1_TokenId, generateSerials(1, 12));
+		await sendNFT(client, aliceId, bobId, legacyCollectionNFT_2_TokenId, generateSerials(13, 24));
+		await sendNFT(client, aliceId, bobId, legacyCollectionNFT_3_TokenId, generateSerials(7, 18));
 		// send 25 NFTs to Operator
-		await sendNFTs(operatorId, aliceId, generateSerials(26, 50), legacyCollectionNFT_1_TokenId);
-		await sendNFTs(operatorId, aliceId, generateSerials(26, 50), legacyCollectionNFT_2_TokenId);
-		await sendNFTs(operatorId, aliceId, generateSerials(26, 50), legacyCollectionNFT_3_TokenId);
+		await sendNFT(client, aliceId, operatorId, legacyCollectionNFT_1_TokenId, generateSerials(26, 50));
+		await sendNFT(client, aliceId, operatorId, legacyCollectionNFT_2_TokenId, generateSerials(26, 50));
+		await sendNFT(client, aliceId, operatorId, legacyCollectionNFT_3_TokenId, generateSerials(26, 50));
 
 		// sent the new NFTs to the contract
-		await sendNFTs(contractId, aliceId, generateSerials(1, 150), newNftTokenId);
+		await sendNFT(client, aliceId, AccountId.fromString(contractId.toString()), newNftTokenId, generateSerials(1, 150));
 
-		await sleep(2000);
+		await sleep(5000);
 
-		// check Alice NFT balance is 64
-		const [aliceLazyBal, , aliceNewNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
+		// check alice balance of the NFTs
+		const aliceLegacy1Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_1_TokenId);
+		const aliceLegacy2Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_2_TokenId);
+		const aliceLegacy3Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_3_TokenId);
+		const aliceNewNFTBalance = await checkMirrorBalance(env, aliceId, newNftTokenId);
+		const aliceLazyBal = await checkMirrorBalance(env, aliceId, lazyTokenId);
+
 		expect(aliceNewNFTBalance).to.be.equal(0);
 		expect(aliceLegacy1Bal).to.be.equal(13);
 		expect(aliceLegacy2Bal).to.be.equal(13);
 		expect(aliceLegacy3Bal).to.be.equal(13);
-		expect(aliceLazyBal).to.be.equal(100000);
+		expect(aliceLazyBal).to.be.equal(100);
+
+		client.setOperator(operatorId, operatorKey);
+		// add the LazyNFTStaker to the lazy gas station as a contract user
+		result = await contractExecuteFunction(
+			lazyGasStationId,
+			lazyGasStationIface,
+			client,
+			null,
+			'addContractUser',
+			[contractId.toSolidityAddress()],
+		);
+
+		if (result[0]?.status.toString() != 'SUCCESS') {
+			console.log('ERROR adding NFBTS to LGS:', result);
+			fail();
+		}
+
+		// check the GasStationAccessControlEvent on the mirror node
+		await sleep(4500);
+		const lgsEvent = await checkLastMirrorEvent(
+			env,
+			lazyGasStationId,
+			lazyGasStationIface,
+			1,
+			true,
+		);
+
+		expect(lgsEvent.toSolidityAddress().toLowerCase()).to.be.equal(
+			contractId.toSolidityAddress(),
+		);
 	});
 });
 
@@ -171,9 +502,20 @@ describe('Operator sets up the claim amount', function() {
 		// set claim amount
 		client.setOperator(operatorId, operatorKey);
 
-		// set claim $LAZY amount
-		let [result] = await useSetterUint256('updateClaimAmount', 100);
-		expect(result).to.be.equal('SUCCESS');
+		// set claim $LAZY amount using updateClaimAmount
+		let result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updateClaimAmount',
+			[100],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to set claim amount:', result);
+			fail();
+		}
 
 		const newSerialList = [];
 		const swapHashList = [];
@@ -192,162 +534,324 @@ describe('Operator sets up the claim amount', function() {
 				tokenForConfig = legacyCollectionNFT_3_TokenId;
 				serial = i - 100;
 			}
-			swapHashList.push(web3.utils.soliditySha3(
-				{ t: 'address', v: tokenForConfig.toSolidityAddress() },
-				{ t: 'uint256', v: serial },
+			swapHashList.push(ethers.solidityPackedKeccak256(
+				['address', 'uint256'],
+				[tokenForConfig.toSolidityAddress(), serial],
 			));
 		}
-		[result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(0, 50), swapHashList.slice(0, 50));
-		expect(result).to.be.equal('SUCCESS');
-		[result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(50, 100), swapHashList.slice(50, 100));
-		expect(result).to.be.equal('SUCCESS');
-		[result] = await useSetterConfig('updateSwapConfig', newSerialList.slice(100), swapHashList.slice(100));
-		expect(result).to.be.equal('SUCCESS');
+		// update the config using updateSwapConfig
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			3_600_000,
+			'updateSwapConfig',
+			[newSerialList.slice(0, 50), swapHashList.slice(0, 50)],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to set swap config:', result);
+			fail();
+		}
+
+		// show the tx Id
+		console.log('Tx ID:', result[2]?.transactionId?.toString());
+
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			3_600_000,
+			'updateSwapConfig',
+			[newSerialList.slice(50, 100), swapHashList.slice(50, 100)],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to set swap config (2):', result);
+			fail();
+		}
+
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			3_600_000,
+			'updateSwapConfig',
+			[newSerialList.slice(100), swapHashList.slice(100)],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to set swap config (3):', result);
+			fail();
+		}
 	});
 
 	it('Should unpause the contract', async function() {
-		// unpause
+
+		// check the contract is paused via mirror nodes
+		const encodedFunction = nfbtsIface.encodeFunctionData('paused');
+
+		const pausedResult = await readOnlyEVMFromMirrorNode(
+			env,
+			contractId,
+			encodedFunction,
+			operatorId,
+			false,
+		);
+
+		const paused = nfbtsIface.decodeFunctionResult('paused', pausedResult);
+
+		expect(paused[0]).to.be.true;
+
+		// updatePauseStatus
 		client.setOperator(operatorId, operatorKey);
-		const result = await useSetterBool('updatePauseStatus', false);
-		expect(result).to.be.equal('SUCCESS');
+		const result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updatePauseStatus',
+			[false],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to unpause the contract:', result);
+			fail();
+		}
 	});
 });
 
 describe('Access Checks: ', function() {
 	it('Alice cant call sensitive methods', async function() {
 		client.setOperator(aliceId, alicePK);
-		let errorCount = 0;
 		// update FT SCT
-		try {
-			await useSetterAddress('updateSCT', aliceId);
+		let result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updateLGS',
+			[lazySCT.toSolidityAddress()],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing updateLGS - expected failure but got:', result);
+			fail();
 		}
-		catch (err) {
-			errorCount++;
+
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updateLazyToken',
+			[lazySCT.toSolidityAddress()],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing updateLazyToken - expected failure but got:', result);
+			fail();
 		}
-		// update FT
-		try {
-			await useSetterAddress('updateLazyToken', ftTokenId);
+
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updateSwapToken',
+			[lazySCT.toSolidityAddress()],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing updateSwapToken - expected failure but got:', result);
+			fail();
 		}
-		catch (err) {
-			errorCount++;
+
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updatePauseStatus',
+			[true],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing updatePauseStatus - expected failure but got:', result);
+			fail();
 		}
-		// update claim NFT
-		try {
-			await useSetterAddress('updateSwapToken', newNftTokenId);
+
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'updateSwapConfig',
+			[[1], [ethers.solidityPackedKeccak256(
+				['address', 'uint256'],
+				[newNftTokenId.toSolidityAddress(), 9999],
+			)]],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing updateSwapConfig - expected failure but got:', result);
+			fail();
 		}
-		catch (err) {
-			errorCount++;
-		}
-		// update pause
-		try {
-			await useSetterBool('updatePauseStatus', false);
-		}
-		catch (err) {
-			errorCount++;
-		}
-		// add config
-		try {
-			await useSetterConfig('updateSwapConfig', [1], [web3.utils.soliditySha3(
-				{ t: 'address', v: newNftTokenId.toSolidityAddress() },
-				{ t: 'uint256', v: 99999 },
-			)]);
-		}
-		catch (err) {
-			errorCount++;
-		}
+
 		// remove config
-		try {
-			await useSetterBytes32Array('removeSwapConfig', [web3.utils.soliditySha3(
-				{ t: 'address', v: newNftTokenId.toSolidityAddress() },
-				{ t: 'uint256', v: 99999 },
-			)]);
-		}
-		catch (err) {
-			errorCount++;
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'removeSwapConfig',
+			[[ethers.solidityPackedKeccak256(
+				['address', 'uint256'],
+				[newNftTokenId.toSolidityAddress(), 9999],
+			)]],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing removeSwapConfig - expected failure but got:', result);
+			fail();
 		}
 		// transfer Hbar
-		try {
-			await transferHbarFromContract(aliceId, 1, HbarUnit.Tinybar);
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			300_000,
+			'transferHbar',
+			[operatorId.toSolidityAddress(), 1],
+		);
+
+		if (result[0]?.status?.toString() != 'REVERT: Ownable: caller is not the owner') {
+			console.log('ERROR executing transferHbar - expected failure but got:', result);
+			fail();
 		}
-		catch (err) {
-			errorCount++;
-		}
-		expect(errorCount).to.be.equal(7);
 	});
 
 	it('Alice can call regular methods', async function() {
 		client.setOperator(aliceId, alicePK);
-		let errorCount = 0;
-		try {
-			const sct = await getSetting('getLazySCT', 'sct');
-			expect(AccountId.fromSolidityAddress(sct).toString() == aliceId.toString()).to.be.true;
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
-		try {
-			const lazy = await getSetting('getLazyToken', 'token');
-			expect(TokenId.fromSolidityAddress(lazy).toString() == ftTokenId.toString()).to.be.true;
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
-		try {
-			const nft = await getSetting('getNewSwapToken', 'token');
-			expect(TokenId.fromSolidityAddress(nft).toString() == newNftTokenId.toString()).to.be.true;
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
-		try {
-			const pause = await getSetting('getPauseStatus', 'paused');
-			expect(pause).to.be.false;
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
-		try {
-			const newSerialList = await getSerials([legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId], [1, 1]);
-			// console.log('newSerialList: ', newSerialList);
-			expect(newSerialList.length == 2).to.be.true;
-		}
-		catch (err) {
-			errorCount++;
-			console.log(err);
-		}
-		expect(errorCount).to.be.equal(0);
+
+		// contract query for the public variables
+		let result = await contractExecuteQuery(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'lazyGasStation',
+		);
+
+		expect(result[0].toString().slice(2).toLowerCase()).to.be.equal(lazyGasStationId.toSolidityAddress().toString().toLowerCase());
+
+		// lazyToken
+		result = await contractExecuteQuery(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'lazyToken',
+		);
+
+		expect(result[0].toString().slice(2).toLowerCase()).to.be.equal(lazyTokenId.toSolidityAddress().toString().toLowerCase());
+
+		// swapToken
+		result = await contractExecuteQuery(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'swapToken',
+		);
+
+		expect(result[0].toString().slice(2).toLowerCase()).to.be.equal(newNftTokenId.toSolidityAddress().toString().toLowerCase());
+
+		// getSerials
+		const swapHashList = [];
+		swapHashList.push(ethers.solidityPackedKeccak256(
+			['address', 'uint256'],
+			[legacyCollectionNFT_1_TokenId.toSolidityAddress(), 1],
+		));
+		swapHashList.push(ethers.solidityPackedKeccak256(
+			['address', 'uint256'],
+			[legacyCollectionNFT_2_TokenId.toSolidityAddress(), 1],
+		));
+
+		result = await contractExecuteQuery(
+			contractId,
+			nfbtsIface,
+			client,
+			null,
+			'getSerials',
+			[swapHashList],
+		);
+
+		console.log('Alice Serials:', result);
+
+		expect(result[0].length).to.be.equal(2);
+		expect(result[0][0]).to.be.equal(1);
+		expect(result[0][1]).to.be.equal(51);
 	});
 });
 
 describe('Interaction: ', function() {
 	it('Bob can Swap', async function() {
 		client.setOperator(bobId, bobPK);
-		let [result, amt] = await swapTokens([legacyCollectionNFT_1_TokenId.toSolidityAddress()], [1], 1_850_000);
-		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(100);
-		await sleep(2000);
-		// check Lazy Balance is now 100
-		let [bobLazyBal, , bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal] = await getAccountBalance(bobId);
-		// console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
-		expect(bobLazyBal).to.be.equal(100);
+
+		// get Bob $LAZY balance
+		const origBobLazyBal = await checkMirrorBalance(env, bobId, lazyTokenId);
+
+		// set NFT allowance
+		const allowanceSet = await setNFTAllowanceAll(
+			client,
+			[legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId],
+			bobId,
+			AccountId.fromString(contractId.toString()),
+		);
+
+		expect(allowanceSet).to.be.equal('SUCCESS');
+
+		// call swapNFTs for token 1, serial 1
+		let result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			750_000,
+			'swapNFTs',
+			[[legacyCollectionNFT_1_TokenId.toSolidityAddress()], [1]],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to swap NFTs:', result);
+			fail();
+		}
+
+		// show tx Id
+		console.log('Bob Swap Tx ID:', result[2]?.transactionId?.toString());
+
+		expect(Number(result[1])).to.be.equal(100);
+
+		await sleep(5000);
+		// check Lazy Balance is now +100
+		const bobLazyBal = await checkMirrorBalance(env, bobId, lazyTokenId);
+		const bobNFTBalance = await checkMirrorBalance(env, bobId, newNftTokenId);
+		const bobLegacy1Bal = await checkMirrorBalance(env, bobId, legacyCollectionNFT_1_TokenId);
+		const bobLegacy2Bal = await checkMirrorBalance(env, bobId, legacyCollectionNFT_2_TokenId);
+		const bobLegacy3Bal = await checkMirrorBalance(env, bobId, legacyCollectionNFT_3_TokenId);
+
+		expect(bobLazyBal).to.be.equal(100 + origBobLazyBal);
 		expect(bobNFTBalance).to.be.equal(1);
 		expect(bobLegacy1Bal).to.be.equal(11);
 		expect(bobLegacy2Bal).to.be.equal(12);
 		expect(bobLegacy3Bal).to.be.equal(12);
 
-		let [aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
-		expect(aliceLazyBal).to.be.equal(100000 - bobLazyBal);
+		let aliceLegacy1Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_1_TokenId);
 		expect(aliceLegacy1Bal).to.be.equal(14);
-		expect(aliceLegacy2Bal).to.be.equal(13);
-		expect(aliceLegacy3Bal).to.be.equal(13);
+
 
 		// check contract balance
-		let [, contractNFTBalance] = await getContractBalance(contractId);
+		let contractNFTBalance = await checkMirrorBalance(env, contractId, newNftTokenId);
 		expect(contractNFTBalance).to.be.equal(149);
 
 		// now burn 11, 12, 12 NFTs of legacy 1, 2, 3
@@ -366,54 +870,109 @@ describe('Interaction: ', function() {
 			serialList.push(i);
 		}
 
-		[result, amt] = await swapTokens(tokenAddressList, serialList);
-		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(3500);
-		await sleep(2000);
-		[bobLazyBal, , bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal] = await getAccountBalance(bobId);
-		// console.log('Bob Lazy Balance', bobLazyBal, bobNFTBalance, bobLegacy1Bal, bobLegacy2Bal, bobLegacy3Bal);
-		expect(bobLazyBal).to.be.equal(3600);
-		expect(bobNFTBalance).to.be.equal(36);
-		expect(bobLegacy1Bal).to.be.equal(0);
-		expect(bobLegacy2Bal).to.be.equal(0);
-		expect(bobLegacy3Bal).to.be.equal(0);
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			4_500_000,
+			'swapNFTs',
+			[tokenAddressList, serialList],
+		);
 
-		// eslint-disable-next-line no-unused-vars
-		[aliceLazyBal, , aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
-		expect(aliceLazyBal).to.be.equal(100000 - bobLazyBal);
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to swap NFTs:', result);
+			fail();
+		}
+
+		// show tx Id
+		console.log('Bob Swap Tx ID:', result[2]?.transactionId?.toString());
+
+		expect(Number(result[1])).to.be.equal(3500);
+
+		await sleep(5500);
+
+		const newBobLazyBal = await checkMirrorBalance(env, bobId, lazyTokenId);
+		const newBobNFTBalance = await checkMirrorBalance(env, bobId, newNftTokenId);
+		const newBobLegacy1Bal = await checkMirrorBalance(env, bobId, legacyCollectionNFT_1_TokenId);
+		const newBobLegacy2Bal = await checkMirrorBalance(env, bobId, legacyCollectionNFT_2_TokenId);
+		const newBobLegacy3Bal = await checkMirrorBalance(env, bobId, legacyCollectionNFT_3_TokenId);
+
+		expect(newBobLazyBal).to.be.equal(3500 + bobLazyBal);
+		expect(newBobNFTBalance).to.be.equal(36);
+		expect(newBobLegacy1Bal).to.be.equal(0);
+		expect(newBobLegacy2Bal).to.be.equal(0);
+		expect(newBobLegacy3Bal).to.be.equal(0);
+
+
+		aliceLegacy1Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_1_TokenId);
+		const aliceLegacy2Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_2_TokenId);
+		const aliceLegacy3Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_3_TokenId);
+
 		expect(aliceLegacy1Bal).to.be.equal(25);
 		expect(aliceLegacy2Bal).to.be.equal(25);
 		expect(aliceLegacy3Bal).to.be.equal(25);
 
-		[, contractNFTBalance] = await getContractBalance(contractId);
+		contractNFTBalance = await checkMirrorBalance(env, contractId, newNftTokenId);
 		expect(contractNFTBalance).to.be.equal(114);
 
 	});
 
 	it('Operator can Swap', async function() {
 		client.setOperator(operatorId, operatorKey);
-		let [result, amt] = await swapTokens([legacyCollectionNFT_1_TokenId.toSolidityAddress()], [26], 1_850_000);
-		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(100);
-		await sleep(3000);
-		// check Lazy Balance is now 10
-		let [opLazyBal, , opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal] = await getAccountBalance(operatorId);
-		// console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
-		expect(opLazyBal).to.be.equal(100);
-		expect(opNFTBalance).to.be.equal(1);
-		expect(opLegacy1Bal).to.be.equal(24);
-		expect(opLegacy2Bal).to.be.equal(25);
-		expect(opLegacy3Bal).to.be.equal(25);
 
-		let [aliceLazyBal, , , aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
-		expect(aliceLazyBal).to.be.equal(100000 - 3600 - opLazyBal);
+		const origOperatorLazyBal = await checkMirrorBalance(env, operatorId, lazyTokenId);
+
+		const allowanceSet = await setNFTAllowanceAll(
+			client,
+			[legacyCollectionNFT_1_TokenId, legacyCollectionNFT_2_TokenId, legacyCollectionNFT_3_TokenId],
+			operatorId,
+			AccountId.fromString(contractId.toString()),
+		);
+
+		operatorNftAllowances.push({ tokenId: legacyCollectionNFT_1_TokenId, owner: operatorId, spender: AccountId.fromString(contractId.toString()) });
+		operatorNftAllowances.push({ tokenId: legacyCollectionNFT_2_TokenId, owner: operatorId, spender: AccountId.fromString(contractId.toString()) });
+		operatorNftAllowances.push({ tokenId: legacyCollectionNFT_3_TokenId, owner: operatorId, spender: AccountId.fromString(contractId.toString()) });
+
+		expect(allowanceSet).to.be.equal('SUCCESS');
+
+		let result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			300_000,
+			'swapNFTs',
+			[[legacyCollectionNFT_1_TokenId.toSolidityAddress()], [26]],
+		);
+
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to swap NFTs (singular):', result);
+			fail();
+		}
+
+		// show tx Id
+		console.log('Operator Swap Tx ID:', result[2]?.transactionId?.toString());
+
+		expect(Number(result[1])).to.be.equal(100);
+
+		await sleep(5000);
+
+		const operatorLazyBal = await checkMirrorBalance(env, operatorId, lazyTokenId);
+		const operatorNFTBalance = await checkMirrorBalance(env, operatorId, newNftTokenId);
+		const operatorLegacy1Bal = await checkMirrorBalance(env, operatorId, legacyCollectionNFT_1_TokenId);
+		const operatorLegacy2Bal = await checkMirrorBalance(env, operatorId, legacyCollectionNFT_2_TokenId);
+		const operatorLegacy3Bal = await checkMirrorBalance(env, operatorId, legacyCollectionNFT_3_TokenId);
+
+		expect(operatorLazyBal).to.be.equal(100 + origOperatorLazyBal);
+		expect(operatorNFTBalance).to.be.equal(1);
+		expect(operatorLegacy1Bal).to.be.equal(24);
+		expect(operatorLegacy2Bal).to.be.equal(25);
+		expect(operatorLegacy3Bal).to.be.equal(25);
+
+		let aliceLegacy1Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_1_TokenId);
 		expect(aliceLegacy1Bal).to.be.equal(26);
-		expect(aliceLegacy2Bal).to.be.equal(25);
-		expect(aliceLegacy3Bal).to.be.equal(25);
 
-		let [, contractNFTBalance] = await getContractBalance(contractId);
+		// check contract balance
+		let contractNFTBalance = await checkMirrorBalance(env, contractId, newNftTokenId);
 		expect(contractNFTBalance).to.be.equal(113);
 
 		// now burn 24, 25, 25 NFTs of legacy 1, 2, 3
@@ -432,72 +991,141 @@ describe('Interaction: ', function() {
 			serialList.push(i);
 		}
 
-		[result, amt] = await swapTokens(tokenAddressList, serialList);
-		expect(result).to.be.equal('SUCCESS');
-		expect(amt).to.be.equal(7400);
-		await sleep(2000);
-		[opLazyBal, , opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal] = await getAccountBalance(operatorId);
-		// console.log('Operator Lazy Balance', opLazyBal, opNFTBalance, opLegacy1Bal, opLegacy2Bal, opLegacy3Bal);
-		expect(opLazyBal).to.be.equal(7500);
-		expect(opNFTBalance).to.be.equal(75);
-		expect(opLegacy1Bal).to.be.equal(0);
-		expect(opLegacy2Bal).to.be.equal(0);
-		expect(opLegacy3Bal).to.be.equal(0);
+		result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			4_500_000,
+			'swapNFTs',
+			[tokenAddressList, serialList],
+		);
 
-		[aliceLazyBal, , , aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal] = await getAccountBalance(aliceId);
-		// console.log('Alice Lazy Balance', aliceLazyBal, aliceNFTBalance, aliceLegacy1Bal, aliceLegacy2Bal, aliceLegacy3Bal);
-		expect(aliceLazyBal).to.be.equal(100000 - 3600 - opLazyBal);
+		if (result[0]?.status?.toString() !== 'SUCCESS') {
+			console.log('Failed to swap NFTs (multi):', result);
+			fail();
+		}
+
+		// show tx Id
+		console.log('Operator Bulk Swap Tx ID:', result[2]?.transactionId?.toString());
+
+		expect(Number(result[1])).to.be.equal(7400);
+
+		await sleep(5000);
+
+		const newOperatorLazyBal = await checkMirrorBalance(env, operatorId, lazyTokenId);
+		const newOperatorNFTBalance = await checkMirrorBalance(env, operatorId, newNftTokenId);
+		const newOperatorLegacy1Bal = await checkMirrorBalance(env, operatorId, legacyCollectionNFT_1_TokenId);
+		const newOperatorLegacy2Bal = await checkMirrorBalance(env, operatorId, legacyCollectionNFT_2_TokenId);
+		const newOperatorLegacy3Bal = await checkMirrorBalance(env, operatorId, legacyCollectionNFT_3_TokenId);
+
+		expect(newOperatorLazyBal).to.be.equal(7400 + operatorLazyBal);
+		expect(newOperatorNFTBalance).to.be.equal(75);
+		expect(newOperatorLegacy1Bal).to.be.equal(0);
+		expect(newOperatorLegacy2Bal).to.be.equal(0);
+		expect(newOperatorLegacy3Bal).to.be.equal(0);
+
+		aliceLegacy1Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_1_TokenId);
+		const aliceLegacy2Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_2_TokenId);
+		const aliceLegacy3Bal = await checkMirrorBalance(env, aliceId, legacyCollectionNFT_3_TokenId);
+
 		expect(aliceLegacy1Bal).to.be.equal(50);
 		expect(aliceLegacy2Bal).to.be.equal(50);
 		expect(aliceLegacy3Bal).to.be.equal(50);
 
-		[, contractNFTBalance] = await getContractBalance(contractId);
+		contractNFTBalance = await checkMirrorBalance(env, contractId, newNftTokenId);
 		expect(contractNFTBalance).to.be.equal(39);
 	});
 
-	after('Retrieve any hbar spent', async function() {
+	// not testing Alice as that account is treasury so no movmeent can occur.
+
+	it('Test where Swap config is missing', async function() {
 		client.setOperator(operatorId, operatorKey);
-		const [, aliceHbarBal] = await getAccountBalance(aliceId);
-		let result = await hbarTransferFcn(aliceId, alicePK, operatorId, aliceHbarBal.toBigNumber().minus(0.01));
-		console.log('Clean-up -> Retrieve hbar from Alice');
-		expect(result).to.be.equal('SUCCESS');
 
+		const result = await contractExecuteFunction(
+			contractId,
+			nfbtsIface,
+			client,
+			300_000,
+			'swapNFTs',
+			[[newNftTokenId.toSolidityAddress()], [1]],
+		);
 
-		const [, bobHbarBal] = await getAccountBalance(bobId);
-		result = await hbarTransferFcn(bobId, bobPK, operatorId, bobHbarBal.toBigNumber().minus(0.01));
-		console.log('Clean-up -> Retrieve hbar from Bob');
-		expect(result).to.be.equal('SUCCESS');
+		console.log('Result:', result);
 
-		client.setOperator(operatorId, operatorKey);
-		let [contractHbarBal] = await getContractBalance(contractId);
-		result = await transferHbarFromContract(operatorId, Number(contractHbarBal.toTinybars()), HbarUnit.Tinybar);
-		console.log('Clean-up -> Retrieve hbar from Contract');
-		[contractHbarBal] = await getContractBalance(contractId);
-		console.log('Contract ending hbar balance:', contractHbarBal.toString());
-		expect(result).to.be.equal('SUCCESS');
+		// expect a ConfigNotFound error
+		if (result[0]?.status?.name != 'ConfigNotFound') {
+			console.log('ERROR expecting ConfigNotFound');
+			fail();
+		}
+	});
+
+	describe('Cleanup: ', function() {
+		it('Operator removes allowances', async function() {
+			client.setOperator(operatorId, operatorKey);
+
+			if (operatorNftAllowances.length != 0) {
+				const result = await clearNFTAllowances(client, operatorNftAllowances);
+				expect(result).to.be.equal('SUCCESS');
+			}
+		});
+
+		it('Cleans up LGS', async function() {
+			// clean up the LGS authorizations
+			const lgsContractUsers = await contractExecuteQuery(
+				lazyGasStationId,
+				lazyGasStationIface,
+				client,
+				null,
+				'getContractUsers',
+			);
+
+			for (let i = 0; i < lgsContractUsers[0].length; i++) {
+				const result = await contractExecuteFunction(
+					lazyGasStationId,
+					lazyGasStationIface,
+					client,
+					300_000,
+					'removeContractUser',
+					[lgsContractUsers[0][i]],
+				);
+
+				if (result[0]?.status.toString() !== 'SUCCESS') {console.log('Failed to remove LGS contract user:', result);}
+				expect(result[0].status.toString()).to.be.equal('SUCCESS');
+			}
+		});
+
+		it('Retrieve any hbar spent', async function() {
+			client.setOperator(operatorId, operatorKey);
+			// v2.0 move to LGS vs. direct allowance
+			// await revokeLSCTAllowance();
+
+			await sleep(5000);
+			let balance = await checkMirrorHbarBalance(env, aliceId);
+			balance -= 1_000_000;
+			console.log('sweeping alice', balance / 10 ** 8);
+			let result = await sweepHbar(client, aliceId, alicePK, operatorId, new Hbar(balance, HbarUnit.Tinybar));
+			console.log('alice:', result);
+
+			balance = await checkMirrorHbarBalance(env, bobId);
+			balance -= 1_000_000;
+			console.log('sweeping bob', balance / 10 ** 8);
+			result = await sweepHbar(client, bobId, bobPK, operatorId, new Hbar(balance, HbarUnit.Tinybar));
+			console.log('bob:', result);
+
+			balance = await checkMirrorHbarBalance(env, contractId);
+			balance -= 1_000_000;
+			result = await contractExecuteFunction(
+				contractId,
+				nfbtsIface,
+				client,
+				300_000,
+				'transferHbar',
+				[operatorId.toSolidityAddress(), balance],
+			);
+			console.log('contract:', result[0]?.status?.toString());
+		});
 	});
 });
-
-/**
- * @param {AccountId} acct
- * @param {PrivateKey} key
- */
-async function mintFT(acct, key) {
-	const tokenCreateTx = new TokenCreateTransaction()
-		.setTokenName('B2E_FT' + acct.toString())
-		.setTokenSymbol('B2E_FT')
-		.setTokenType(TokenType.FungibleCommon)
-		.setDecimals(TOKEN_DECIMAL)
-		.setInitialSupply(100000)
-		.setTreasuryAccountId(acct)
-		.setSupplyKey(key)
-		.freezeWith(client);
-
-	const tokenCreateSubmit = await tokenCreateTx.execute(client);
-	const tokenCreateRx = await tokenCreateSubmit.getReceipt(client);
-	ftTokenId = tokenCreateRx.tokenId;
-	console.log('FT Minted:', ftTokenId.toString());
-}
 
 /**
  * Generate a list of serials from start to end
@@ -514,487 +1142,134 @@ function generateSerials(start, end) {
 }
 
 /**
- * Helper function to send serial 1 of the minted NFT to Alic for testing
+ * Helper function to encpapsualte minting an FT
+ * @param {string} tokenName
+ * @param {string} tokenSymbol
+ * @param {string} tokenMemo
+ * @param {number} tokenInitalSupply
+ * @param {number} tokenDecimal
+ * @param {number} tokenMaxSupply
+ * @param {number} payment
+ */
+async function mintLazy(
+	tokenName,
+	tokenSymbol,
+	tokenMemo,
+	tokenInitalSupply,
+	decimal,
+	tokenMaxSupply,
+	payment,
+) {
+	const gasLim = 800000;
+	// call associate method
+	const params = [
+		tokenName,
+		tokenSymbol,
+		tokenMemo,
+		tokenInitalSupply,
+		decimal,
+		tokenMaxSupply,
+	];
+
+	const [, , createTokenRecord] = await contractExecuteFunction(
+		lazySCT,
+		lazyIface,
+		client,
+		gasLim,
+		'createFungibleWithBurn',
+		params,
+		payment,
+	);
+	const tokenIdSolidityAddr =
+		createTokenRecord.contractFunctionResult.getAddress(0);
+	lazyTokenId = TokenId.fromSolidityAddress(tokenIdSolidityAddr);
+}
+
+/**
+ * Use the LSCT to send $LAZY out
  * @param {AccountId} receiverId
- * @param {AccountId} senderId
- * @param {Number[]} serials
- * @param {TokenId} token
-*/
-async function sendNFTs(receiverId, senderId, serials, tokenToUse) {
-	for (let outer = 0; outer < serials.length; outer += 10) {
-		const transferTx = await new TransferTransaction();
-		for (let inner = 0; (inner < 10 && (inner + outer) < serials.length); inner++) {
-			const nft = new NftId(tokenToUse, serials[inner + outer]);
-			// console.log('Sending NFT:', nft.toString(), 'to', receiverId.toString(), 'from', senderId.toString());
-			transferTx.addNftTransfer(nft, senderId, receiverId);
-		}
-
-		transferTx.setTransactionMemo('NFBFTknSwp test NFT transfer')
-			.freezeWith(client);
-
-		// eslint-disable-next-line no-unused-vars
-		const response = await transferTx.execute(client);
-		// const receipt = await response.getReceipt(client);
-
-		// console.log('NFT Transfer Result:', receipt.status.toString());
+ * @param {*} amt
+ */
+async function sendLazy(receiverId, amt) {
+	const result = await contractExecuteFunction(
+		lazySCT,
+		lazyIface,
+		client,
+		300_000,
+		'transferHTS',
+		[lazyTokenId.toSolidityAddress(), receiverId.toSolidityAddress(), amt],
+	);
+	if (result[0]?.status?.toString() !== 'SUCCESS') {
+		console.log('Failed to send $LAZY:', result);
+		fail();
 	}
+	return result[0]?.status.toString();
 }
 
-
-/**
- * Method to encapsulate the staking method to send to graveyard
- * @param {string[]} tokenAddresses in solidity format
- * @param {Number[]} serials serials
- * @param {Number} gasBoost gas boost to add to the gas limit
- * @returns {string} 'SUCCESS' if it worked
- */
-async function swapTokens(tokenAddresses, serials, gasBoost = 0) {
-	// console.log('Swapping tokens:', tokenAddresses, serials, 'gasBoost:', gasBoost);
-	const gasLim = 400_000 + ((serials.length - (serials.length % 5)) / 5 * 300_000) + gasBoost;
-	// console.log('Gas Limit:', gasLim);
-
-	const params = new ContractFunctionParameters()
-		.addAddressArray(tokenAddresses)
-		.addUint256Array(serials);
-	const [stakingRx, contractResults] = await contractExecuteFcn(contractId, gasLim, 'swapNFTs', params);
-	return [stakingRx.status.toString(), Number(contractResults['amt'])];
-}
-
-/**
- * Helper to setup the allowances
- * @param {AccountId} spenderAcct the account to set allowance for
- * @param {AccountId} ownerAcct the account to set allowance for
- * @param {*} amount amount of allowance to set
- */
-async function setFungibleAllowance(spenderAcct, ownerAcct, amount) {
-	const ctrcttAsAccount = AccountId.fromString(spenderAcct.toString());
-	// console.log('Set approval\nToken:', tokenId.toString());
-	// console.log('Spender:', spenderAcct.toString(), ctrcttAsAccount.toString());
-	// console.log('Owner:', ownerAcct.toString(), aliceId.toString());
-	const transaction = new AccountAllowanceApproveTransaction()
-		.approveTokenAllowance(ftTokenId, ownerAcct, ctrcttAsAccount, amount)
-		.freezeWith(client);
-
-	const txResponse = await transaction.execute(client);
-	const receipt = await txResponse.getReceipt(client);
-	return receipt.status.toString();
-}
-
-/**
- * Helper function to deploy the contract
- * @param {string} bytecode bytecode from compiled SOL file
- * @param {number} gasLim gas limit as a number
- */
-async function contractDeployFcn(bytecode, gasLim) {
-	const contractCreateTx = new ContractCreateFlow()
-		.setBytecode(bytecode)
-		.setGas(gasLim)
-		.setConstructorParameters(
-			new ContractFunctionParameters()
-				.addAddress(newNftTokenId.toSolidityAddress())
-				.addAddress(aliceId.toSolidityAddress())
-				.addAddress(aliceId.toSolidityAddress())
-				.addAddress(ftTokenId.toSolidityAddress()),
-		);
-	const contractCreateSubmit = await contractCreateTx.execute(client);
-	const contractCreateRx = await contractCreateSubmit.getReceipt(client);
-	contractId = contractCreateRx.contractId;
-	contractAddress = contractId.toSolidityAddress();
-}
-
-/**
- * Helper function for calling the contract methods
- * @param {ContractId} cId the contract to call
- * @param {number | Long.Long} gasLim the max gas
- * @param {string} fcnName name of the function to call
- * @param {ContractFunctionParameters} params the function arguments
- * @param {string | number | Hbar | Long.Long | BigNumber} amountHbar the amount of hbar to send in the methos call
- * @returns {[TransactionReceipt, any]} the transaction receipt and any decoded results
- */
-async function contractExecuteFcn(cId, gasLim, fcnName, params, amountHbar) {
-	const contractExecuteTx = await new ContractExecuteTransaction()
-		.setContractId(cId)
-		.setGas(gasLim)
-		.setFunction(fcnName, params)
-		.setPayableAmount(amountHbar)
-		.execute(client);
-
-	// get the results of the function call;
-	const record = await contractExecuteTx.getRecord(client);
-	const contractResults = decodeFunctionResult(fcnName, record.contractFunctionResult.bytes);
-	const contractExecuteRx = await contractExecuteTx.getReceipt(client);
-	return [contractExecuteRx, contractResults];
-}
-
-/**
- * Decodes the result of a contract's function execution
- * @param functionName the name of the function within the ABI
- * @param resultAsBytes a byte array containing the execution result
- */
-function decodeFunctionResult(functionName, resultAsBytes) {
-	const functionAbi = abi.find(func => func.name === functionName);
-	try {
-		const functionParameters = functionAbi.outputs;
-		const resultHex = '0x'.concat(Buffer.from(resultAsBytes).toString('hex'));
-		const result = web3.eth.abi.decodeParameters(functionParameters, resultHex);
-		return result;
-	}
-	catch (e) {
-		return 'No outputs';
-	}
-}
-
-/**
- * Helper method to encode a contract query function
- * @param {string} functionName name of the function to call
- * @param {string[]} parameters string[] of parameters - typically blank
- * @returns {Buffer} encoded function call
- */
-function encodeFunctionCall(functionName, parameters) {
-	const functionAbi = abi.find((func) => func.name === functionName && func.type === 'function');
-	const encodedParametersHex = web3.eth.abi.encodeFunctionCall(functionAbi, parameters).slice(2);
-	return Buffer.from(encodedParametersHex, 'hex');
-}
-
-/**
- * Helper function to create new accounts
- * @param {PrivateKey} privateKey new accounts private key
- * @param {string | number} initialBalance initial balance in hbar
- * @returns {AccountId} the nrewly created Account ID object
- */
-async function accountCreator(privateKey, initialBalance) {
-	const response = await new AccountCreateTransaction()
-		.setInitialBalance(new Hbar(initialBalance))
-		// .setMaxAutomaticTokenAssociations(5)
-		.setKey(privateKey.publicKey)
-		.execute(client);
-	const receipt = await response.getReceipt(client);
-	return receipt.accountId;
-}
-
-/**
- * Helper function to mint an NFT and a serial on to that token
- * Using royaltyies to test the (potentially) more complicate case
- */
-async function mintNFTs() {
-	legacyCollectionNFT_1_TokenId = await mintNFT('NFBFTSwp-NFT-legacy1', 50);
-	legacyCollectionNFT_2_TokenId = await mintNFT('NFBFTSwp-NFT-legacy2', 50);
-	legacyCollectionNFT_3_TokenId = await mintNFT('NFBFTSwp-NFT-legacy3', 50);
-	newNftTokenId = await mintNFT('NFBFTSwp-NFT-newCollection', 150);
-}
-
-async function mintNFT(name, supply) {
-	const tokenCreateTx = new TokenCreateTransaction()
-		.setTokenType(TokenType.NonFungibleUnique)
-		.setTokenName(name + aliceId.toString() + new Date().getTime())
-		.setTokenSymbol(name + new Date().getTime())
-		.setInitialSupply(0)
-		.setMaxSupply(supply)
-		.setSupplyType(TokenSupplyType.Finite)
-		.setTreasuryAccountId(AccountId.fromString(aliceId))
-		.setAutoRenewAccountId(AccountId.fromString(aliceId))
-		.setSupplyKey(alicePK)
-		.setMaxTransactionFee(new Hbar(75, HbarUnit.Hbar));
-
-	tokenCreateTx.freezeWith(client);
-	const signedCreateTx = await tokenCreateTx.sign(operatorKey);
-	const executionResponse = await signedCreateTx.execute(client);
-
-	/* Get the receipt of the transaction */
-	const createTokenRx = await executionResponse.getReceipt(client).catch((e) => {
-		console.log(e);
-		console.log('Token Create **FAILED*');
-	});
-
-	/* Get the token ID from the receipt */
-	const tokenIdMinted = createTokenRx.tokenId;
-	console.log('NFT Token ID: ' + tokenIdMinted.toString());
-
-
-	for (let outer = 0; outer < supply; outer++) {
-
-		const tokenMintTx = new TokenMintTransaction().setTokenId(tokenIdMinted);
-
-		for (let i = 0; i < 10; i++) {
-			tokenMintTx.addMetadata(Buffer.from('ipfs://bafybeihbyr6ldwpowrejyzq623lv374kggemmvebdyanrayuviufdhi6xu/metadata.json'));
-		}
-
-		tokenMintTx.freezeWith(client);
-
-		await tokenMintTx.execute(client);
-	}
-
-	return tokenIdMinted;
-}
-
-/**
- * Helper method for token association
- * @param {AccountId} account
- * @param {TokenId[]} tokenListToAssociate
- * @returns {any} expected to be a string 'SUCCESS' implies it worked
- */
 // eslint-disable-next-line no-unused-vars
-async function associateTokensToAccount(account, tokenListToAssociate) {
-	// now associate the token to the operator account
-	for (let i = 0; i < tokenListToAssociate.length; i++) {
-		const associateToken = await new TokenAssociateTransaction()
-			.setAccountId(account)
-			.setTokenIds([tokenListToAssociate[i].toString()])
-			.freezeWith(client);
+async function setLSCTAllowance(amount) {
+	const fudgedContractId = AccountId.fromString(contractId.toString());
+	// call addAllowanceWhitelist to add the desployed swap contract
+	const result = await contractExecuteFunction(
+		lazySCT,
+		lazyIface,
+		client,
+		300_000,
+		'addAllowanceWhitelist',
+		[fudgedContractId.toSolidityAddress()],
+	);
 
-		const associateTokenTx = await associateToken.execute(client);
-		const associateTokenRx = await associateTokenTx.getReceipt(client);
-
-		const associateTokenStatus = associateTokenRx.status;
-		if (associateTokenStatus.toString() != 'SUCCESS') {
-			return associateTokenStatus.toString();
-		}
+	if (result[0]?.status?.toString() !== 'SUCCESS') {
+		console.log('Failed to add allowance whitelist:', result);
+		fail();
 	}
 
-	return 'SUCCESS';
-}
+	// call approveAllowance to approve the amount
+	const result2 = await contractExecuteFunction(
+		lazySCT,
+		lazyIface,
+		client,
+		950_000,
+		'approveAllowance',
+		[lazyTokenId.toSolidityAddress(), fudgedContractId.toSolidityAddress(), amount],
+	);
 
-/**
- * Helper function to gather relevant balances
- * @param {AccountId} acctId
- * @returns {[number, Hbar, number]} NFT token balance, hbar balance, $LAZY balance
- */
-async function getAccountBalance(acctId) {
-	await sleep(1000);
-
-	const query = new AccountInfoQuery()
-		.setAccountId(acctId);
-
-	const info = await query.execute(client);
-
-
-	const tokenMap = info.tokenRelationships;
-	const balance = await getAccountNFTBalance(tokenMap, ftTokenId);
-	const legacy1 = await getAccountNFTBalance(tokenMap, legacyCollectionNFT_1_TokenId);
-	const legacy2 = await getAccountNFTBalance(tokenMap, legacyCollectionNFT_2_TokenId);
-	const legacy3 = await getAccountNFTBalance(tokenMap, legacyCollectionNFT_3_TokenId);
-	const newNft = await getAccountNFTBalance(tokenMap, newNftTokenId);
-
-
-	return [balance, info.balance, newNft, legacy1, legacy2, legacy3];
-}
-
-async function getAccountNFTBalance(tokenMap, token) {
-	let nftBal;
-	const tokenBal = tokenMap.get(token.toString());
-	if (tokenBal) {
-		nftBal = Number(tokenBal.balance);
+	if (result2[0]?.status?.toString() !== 'SUCCESS') {
+		console.log('Failed to approve allowance:', result2);
+		fail();
 	}
-	else {
-		nftBal = -1;
+}
+
+// eslint-disable-next-line no-unused-vars
+async function revokeLSCTAllowance() {
+	const fudgedContractId = AccountId.fromString(contractId.toString());
+
+	let result = await contractExecuteFunction(
+		lazySCT,
+		lazyIface,
+		client,
+		950_000,
+		'approveAllowance',
+		[lazyTokenId.toSolidityAddress(), fudgedContractId.toSolidityAddress(), 0],
+	);
+
+	if (result[0]?.status?.toString() !== 'SUCCESS') {
+		console.log('Failed to revoke allowance:', result);
+		fail();
 	}
 
-	return nftBal;
-}
+	// call removeAllowanceWhitelist to remove the desployed swap contract
+	result = await contractExecuteFunction(
+		lazySCT,
+		lazyIface,
+		client,
+		300_000,
+		'removeAllowanceWhitelist',
+		[fudgedContractId.toSolidityAddress()],
+	);
 
-/**
- * Helper function to get the FT & hbar balance of the contract
- * @returns {[number | Long.Long, Hbar]} The balance of the FT (without decimals)  & Hbar at the SC
- */
-async function getContractBalance() {
-
-	const query = new ContractInfoQuery()
-		.setContractId(contractId);
-
-	const info = await query.execute(client);
-
-	const tokenMap = info.tokenRelationships;
-	const newNft = await getAccountNFTBalance(tokenMap, newNftTokenId);
-
-	return [info.balance, newNft];
-}
-
-/**
- * Helper function to send hbar
- * @param {AccountId} sender sender address
- * @param {AccountId} receiver receiver address
- * @param {string | number | BigNumber} amount the amounbt to send
- * @returns {TransactionReceipt | null} the result
- */
-async function hbarTransferFcn(sender, senderPK, receiver, amount) {
-	const transferTx = new TransferTransaction()
-		.addHbarTransfer(sender, -amount)
-		.addHbarTransfer(receiver, amount)
-		.freezeWith(client);
-	const transferSign = await transferTx.sign(senderPK);
-	const transferSubmit = await transferSign.execute(client);
-	const transferRx = await transferSubmit.getReceipt(client);
-	return transferRx.status.toString();
-}
-
-/**
- * Generic setter caller
- * @param {string} fcnName
- * @param {TokenId | AccountId | ContractId} value
- * @returns {string}
- */
-// eslint-disable-next-line no-unused-vars
-async function useSetterAddress(fcnName, value) {
-	const gasLim = 200000;
-	const params = new ContractFunctionParameters()
-		.addAddress(value.toSolidityAddress());
-	const [setterAddressRx, , ] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
-	return setterAddressRx.status.toString();
-}
-
-/**
- * Generic setter caller
- * @param {string} fcnName
- * @param {number} int
- * @returns {string}
- */
-// eslint-disable-next-line no-unused-vars
-async function useSetterUint256(fcnName, int) {
-	const gasLim = 400000;
-	const params = new ContractFunctionParameters().addUint256(int);
-
-	const [setterIntArrayRx, setterResult] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
-	return [setterIntArrayRx.status.toString(), setterResult];
-}
-
-/**
- * Generic setter caller
- * @param {string} fcnName
- * @param {number[]} bytesArray
- * @returns {string}
- */
-async function useSetterBytes32Array(fcnName, bytesArray) {
-	const gasLim = 8000000;
-	const params = new ContractFunctionParameters().addBytes32Array(bytesArray);
-
-	const [setterIntArrayRx, setterResult] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
-	return [setterIntArrayRx.status.toString(), setterResult];
-}
-
-/**
- * Generic setter caller
- * @param {string} fcnName
- * @param {string[]} hashes
- * @param {number[]} serials
- * @returns {string}
- */
-// eslint-disable-next-line no-unused-vars
-async function useSetterConfig(fcnName, hashes, serials) {
-	const gasLim = 8000000;
-	const params = [hashes, serials];
-
-	const [setterIntArrayRx, setterResult] = await contractExecuteWithStructArgs(contractId, gasLim, fcnName, params);
-	return [setterIntArrayRx.status.toString(), setterResult];
-}
-
-async function contractExecuteWithStructArgs(cId, gasLim, fcnName, params, amountHbar, clientToUse = client) {
-	// use web3.eth.abi to encode the struct for sending.
-	// console.log('pre-encode:', JSON.stringify(params, null, 4));
-	const functionCallAsUint8Array = await encodeFunctionCall(fcnName, params);
-
-	const contractExecuteTx = await new ContractExecuteTransaction()
-		.setContractId(cId)
-		.setGas(gasLim)
-		.setFunctionParameters(functionCallAsUint8Array)
-		.setPayableAmount(amountHbar)
-		.freezeWith(clientToUse)
-		.execute(clientToUse);
-
-	// get the results of the function call;
-	const record = await contractExecuteTx.getRecord(clientToUse);
-	const contractResults = decodeFunctionResult(fcnName, record.contractFunctionResult.bytes);
-	const contractExecuteRx = await contractExecuteTx.getReceipt(clientToUse);
-	return [contractExecuteRx, contractResults, record];
-}
-
-/**
- * Generic setter caller
- * @param {string} fcnName
- * @param {boolean} value
- * @param {number=} gasLim
- * @returns {string}
- */
-// eslint-disable-next-line no-unused-vars
-async function useSetterBool(fcnName, value, gasLim = 200000) {
-	const params = new ContractFunctionParameters()
-		.addBool(value);
-	const [setterAddressRx, , ] = await contractExecuteFcn(contractId, gasLim, fcnName, params);
-	return setterAddressRx.status.toString();
-}
-
-/**
- * Request hbar from the contract
- * @param {AccountId} address
- * @param {number} amount
- * @param {HbarUnit=} units defaults to Hbar as the unit type
- */
-async function transferHbarFromContract(address, amount, units = HbarUnit.Hbar) {
-	const gasLim = 400000;
-	const params = new ContractFunctionParameters()
-		.addAddress(address.toSolidityAddress())
-		.addUint256(new Hbar(amount, units).toTinybars());
-	const [callHbarRx, , ] = await contractExecuteFcn(contractId, gasLim, 'transferHbar', params);
-	return callHbarRx.status.toString();
-}
-
-/**
- * Helper function to get the current settings of the contract
- * @param {string} fcnName the name of the getter to call
- * @param {string} expectedVar the variable to exeppect to get back
- * @param {number=100000} gasLim allows gas veride
- * @return {*}
- */
-// eslint-disable-next-line no-unused-vars
-async function getSetting(fcnName, expectedVar, gasLim = 100000) {
-	// check the Lazy Token and LSCT addresses
-	// generate function call with function name and parameters
-	const functionCallAsUint8Array = await encodeFunctionCall(fcnName, []);
-
-	// query the contract
-	const contractCall = await new ContractCallQuery()
-		.setContractId(contractId)
-		.setFunctionParameters(functionCallAsUint8Array)
-		.setQueryPayment(new Hbar(1))
-		.setGas(gasLim)
-		.execute(client);
-	const queryResult = await decodeFunctionResult(fcnName, contractCall.bytes);
-	// console.log('result', queryResult);
-	return queryResult[expectedVar];
-}
-
-/**
- * Helper function to get the current settings of the contract
- * @param {String[]} tokenList the name of the getter to call
- * @param {Number[]} serials the variable to exeppect to get back
- * @param {number=300_000} gasLim allows gas overide
- * @return {*}
- */
-// eslint-disable-next-line no-unused-vars
-async function getSerials(tokenList, serials, gasLim = 300_000) {
-	const fcnName = 'getSerials';
-	const hashList = [];
-	for (let i = 0; i < tokenList.length; i++) {
-		const hash = web3.utils.soliditySha3(
-			{ t: 'address', v: tokenList[i].toSolidityAddress() },
-			{ t: 'uint256', v: serials[i] },
-		);
-		// console.log(tokenList[i].toString(), '/#', serials[i], '->', hash);
-		hashList.push(hash);
+	if (result[0]?.status?.toString() !== 'SUCCESS') {
+		console.log('Failed to remove allowance whitelist:', result);
+		fail();
 	}
-
-	const functionCallAsUint8Array = await encodeFunctionCall(fcnName, [hashList]);
-
-	// query the contract
-	const contractCall = await new ContractCallQuery()
-		.setContractId(contractId)
-		.setFunctionParameters(functionCallAsUint8Array)
-		.setQueryPayment(new Hbar(1))
-		.setGas(gasLim)
-		.execute(client);
-	const queryResult = await decodeFunctionResult(fcnName, contractCall.bytes);
-	return queryResult['serials'];
-}
-
-function sleep(ms) {
-	return new Promise(resolve => setTimeout(resolve, ms));
 }

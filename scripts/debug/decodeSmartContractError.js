@@ -110,7 +110,8 @@ async function processError(error, silent, indent) {
 			// Setup a abiDecoder with the ABI for the error
 			abiDecoder.addABI(abi);
 			const decodedError = abiDecoder.decodeMethod(error.data);
-
+			console.log('🚀 ~ file: decodeSmartContractError.js ~ line 113 ~ processError ~ error.data', error.data);
+			console.log('🚀 ~ file: decodeSmartContractError.js ~ line 113 ~ processError ~ decodedError', decodedError);
 			if (decodedError) {
 				console.log(`${'.'.repeat(indent)}Error is ${decodedError.name}`);
 				decodedError.params.forEach(parameter => {

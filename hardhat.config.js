@@ -1,9 +1,10 @@
 require('@nomicfoundation/hardhat-toolbox');
+require('hardhat-contract-sizer');
 
 /** @type import('hardhat/config').HardhatUserConfig */
 module.exports = {
 	solidity: {
-		version: '0.8.12',
+		version: '0.8.18',
 		settings: {
 			optimizer: {
 				enabled: true,
@@ -11,7 +12,14 @@ module.exports = {
 			},
 		},
 	},
+	contractSizer: {
+		alphaSort: true,
+		runOnCompile: true,
+		disambiguatePaths: false,
+		strict: true,
+	},
 	mocha: {
-		timeout: 200000,
+		timeout: 100000000,
+		slow: 100000,
 	},
 };
