@@ -125,7 +125,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
     function swapNFTs(
 		address[] calldata tokensToSwap,
         uint256[] calldata serials
-    ) external payable returns (uint256 amt) {
+    ) external returns (uint256 amt) {
         require(serials.length <= type(uint8).max, "Too many serials");
 		require(tokensToSwap.length == serials.length, "Tokens != serials");
 		require(!paused, "Contract is paused");

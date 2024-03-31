@@ -9,7 +9,7 @@ require('dotenv').config();
 const fs = require('fs');
 const { ethers } = require('ethers');
 const { getArgFlag } = require('../../utils/nodeHelpers');
-const { contractExecuteFunction } = require('../../utils/solidityHelpers');
+const { contractExecuteFunction, readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers');
 const readlineSync = require('readline-sync');
 
 // Get operator from .env file
@@ -23,7 +23,7 @@ catch (err) {
 	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
 }
 
-const contractName = 'NoFallbackTokenSwap';
+const contractName = 'FallbackTokenSwap';
 const env = process.env.ENVIRONMENT ?? null;
 let client;
 
@@ -31,40 +31,44 @@ let client;
 const main = async () => {
 	const args = process.argv.slice(2);
 	if (args.length != 3 || getArgFlag('h')) {
-		console.log('Usage: tokenSwap.js 0.0.CCC 0.0.XXX,0.0.YYY X1,X2,X3:Y1,Y2,Y3');
+		console.log('Usage: stakeNewTokens.js 0.0.CCC X,Y,Z');
 		console.log('		CCC is the contractId to update the claim amount');
-		console.log('		0.0.XXX,0.0.YYY are the tokens to swap in same order as the serials');
-		console.log('		X,Y,Z are the serials to swap in same order as the tokenIds delimited by :');
-		console.log('example: checkConfigForTokens.js 0.0.123 0.0.456,0.0.789 1,2:3,4');
+		console.log('		X,Y,Z are the serials to stake');
 		return;
 	}
 
 	const contractId = ContractId.fromString(args[0]);
-	const tokens = args[1].split(',').map((t) => TokenId.fromString(t));
-	// create and array of arrays
-	const serials = args[2].split(':').map((s) => s.split(','));
-
-	if (tokens.length != serials.length) {
-		console.log('ERROR: Must have same number of tokens as serials');
-		return;
-	}
+	const serials = args[1].split(',').map((s) => parseInt(s));
 
 	console.log('\n-Using ENIVRONMENT:', env);
 	console.log('\n-Using Operator:', operatorId.toString());
 	console.log('\n-Using Contract:', contractId.toString());
-	console.log('\n-Preparing to swap tokens...');
+	console.log('\n-Preparing to stake tokens...');
+	console.log('\n-Serials:', serials.join(','));
+
+	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
+	const fbtsIface = new ethers.Interface(json.abi);
+
+	// get the newTokenId from the contract vis mirror node
+	const encodedCommand = fbtsIface.encodeFunctionData('swapToken', []);
+
+	let result = await readOnlyEVMFromMirrorNode(
+		env,
+		contractId,
+		encodedCommand,
+		operatorId,
+		false,
+	);
+
+	const tokenAddress = fbtsIface.decodeFunctionResult('swapToken', result).newTokenId;
+
+	const newToken = TokenId.fromSolidityAddress(tokenAddress[0].slice(2)).toString();
 
 
-	const tokenArg = [];
-	const serialArg = [];
-	for (let i = 0; i < tokens.length; i++) {
-		for (let j = 0; j < serials[i].length; j++) {
-			tokenArg.push(tokens[i]);
-			serialArg.push(serials[i][j]);
-		}
-	}
+	console.log('New Token:', newToken.toString());
+	// can validate operator owns the tokens...
 
-	const proceed = readlineSync.keyInYNStrict('Do you want to swap the tokens?');
+	const proceed = readlineSync.keyInYNStrict('Do you want to stake the tokens?');
 	if (!proceed) {
 		console.log('User Aborted');
 		return;
@@ -96,20 +100,16 @@ const main = async () => {
 
 	client.setOperator(operatorId, operatorKey);
 
-	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
-	const nfbtsIface = new ethers.Interface(json.abi);
-
-	const result = await contractExecuteFunction(
+	result = await contractExecuteFunction(
 		contractId,
-		nfbtsIface,
+		fbtsIface,
 		client,
-		150_000 + 60_000 * tokens.length,
-		'swapNFTs',
-		[tokens, serials],
+		115_000 * serials.length,
+		'stakeNFTs',
+		[serials],
 	);
 
-	console.log('$LAZY Received:', result[1]?.toString());
-	console.log('Tokens swapped:', result[0]?.status?.toString(), 'txId:', result[2]?.transactionId?.toString());
+	console.log('Tokens staked:', result[0]?.status?.toString(), 'txId:', result[2]?.transactionId?.toString());
 };
 
 main()

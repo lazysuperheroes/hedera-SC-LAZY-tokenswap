@@ -444,9 +444,9 @@ async function setFTAllowance(client, _tokenId, _ownerId, _spenderId, amount) {
 		_ownerId.toString(),
 		'for',
 		_spenderId.toString(),
-		receipt?.status.toString(),
+		receipt?.status?.toString(),
 	);
-	return receipt.status.toString();
+	return receipt?.status?.toString();
 }
 
 /**

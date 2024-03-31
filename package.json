@@ -6,6 +6,7 @@
   "scripts": {
     "test": "npx hardhat test",
     "test-nfb": "npx hardhat test test/NoFallbackTokenSwap.test.js",
+	"test-fb": "npx hardhat test test/FallbackTokenSwap.test.js",
     "deploy": "npx hardhat run scripts/deploy.js",
     "logs": "node scripts/getContractLogs.js",
     "solhint": "npx solhint -f table contracts/**/*.sol"
