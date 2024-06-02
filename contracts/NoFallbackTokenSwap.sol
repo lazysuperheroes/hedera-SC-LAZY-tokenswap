@@ -19,7 +19,12 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 	using SafeCast for uint256;
 
 	error BadInput();
+	error ExceedsMaxSerials();
 	error ConfigNotFound(address token, uint256 serial);
+	error AssociationFailed();
+	error ContractPaused();
+	error NFTTransferFailed();
+	error FTTransferFailed();
 
 	address public swapToken;
 	address public swapTokenTreasury;
@@ -56,8 +61,8 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 
 		int256 responseCode = associateToken(address(this), _swapToken);
 
-		if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert("Associating Swap Token failed");
+		if (!(responseCode == HederaResponseCodes.SUCCESS || responseCode == HederaResponseCodes.TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT)) {
+            revert AssociationFailed();
         }
     }
 
@@ -86,8 +91,10 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		swapToken = _swapToken;
 
 		// associate the new token with this contract
-		// not checking for success as it will fail if already associated
-		associateToken(address(this), swapToken);
+		int256 responseCode = associateToken(address(this), swapToken);
+		if (!(responseCode == HederaResponseCodes.SUCCESS || responseCode == HederaResponseCodes.TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT)) {
+			revert AssociationFailed();
+		}
 	}
 
 	function updateClaimAmount(uint256 _amount) external onlyOwner {
@@ -126,9 +133,9 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		address[] calldata tokensToSwap,
         uint256[] calldata serials
     ) external returns (uint256 amt) {
-        require(serials.length <= type(uint8).max, "Too many serials");
-		require(tokensToSwap.length == serials.length, "Tokens != serials");
-		require(!paused, "Contract is paused");
+        if (serials.length > type(uint8).max) revert ExceedsMaxSerials();
+		if (tokensToSwap.length != serials.length) revert BadInput();
+		if (paused) revert ContractPaused();
 		int256 responseCode;
 
 		/* 
@@ -205,7 +212,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 			// transfer the NFTs
 			responseCode = HederaTokenService.cryptoTransfer(_transfers);
 			if (responseCode != HederaResponseCodes.SUCCESS) {
-            	revert("TokenSwap NFT Transfer failed");
+				revert NFTTransferFailed();
         	}
 		}
 
@@ -213,7 +220,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		if (amt == 0) return 0;
 
 		uint256 paid = lazyGasStation.payoutLazy(msg.sender, amt, 0);
-		if (paid != amt) revert("TokenSwap FT Transfer failed");
+		if (paid != amt) revert FTTransferFailed();
 
         emit TokenSwapEvent(
             msg.sender,

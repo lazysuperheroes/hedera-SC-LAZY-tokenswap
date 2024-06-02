@@ -7,9 +7,8 @@ const {
 require('dotenv').config();
 const fs = require('fs');
 const { ethers } = require('ethers');
-const readlineSync = require('readline-sync');
 const { getArgFlag } = require('../../utils/nodeHelpers');
-const { contractExecuteFunction, readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers');
+const { contractExecuteFunction } = require('../../utils/solidityHelpers');
 
 // Get operator from .env file
 let operatorKey;
@@ -22,7 +21,7 @@ catch (err) {
 	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
 }
 
-const contractName = 'NoFallbackTokenSwap';
+const contractName = 'FallbackTokenSwap';
 
 const env = process.env.ENVIRONMENT ?? null;
 let client;
@@ -35,20 +34,18 @@ const main = async () => {
 	}
 
 	const args = process.argv.slice(2);
-	if (args.length != 2 || getArgFlag('h')) {
-		console.log('Usage: setLazyClaimAmount.js 0.0.CCC X');
-		console.log('		CCC is the contractId to update the claim amount');
-		console.log('		The amount of $LAZY per claim (add the decimal)');
+	if (args.length != 1 || getArgFlag('h')) {
+		console.log('Usage: unpause.js 0.0.CCC');
+		console.log('		CCC is the contractId to pause');
 		return;
 	}
 
 	const contractId = ContractId.fromString(args[0]);
-	const newAmount = Number(args[1]);
 
 	console.log('\n-Using ENIVRONMENT:', env);
 	console.log('\n-Using Operator:', operatorId.toString());
-	console.log('\n-Using Contract:', contractId.toString());
-
+	console.log('\n-Pausing Contract:', contractName);
+	console.log('\n-Using ContractId:', contractId.toString());
 
 	if (env.toUpperCase() == 'TEST') {
 		client = Client.forTestnet();
@@ -76,42 +73,20 @@ const main = async () => {
 
 	client.setOperator(operatorId, operatorKey);
 
-
 	// import ABI
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
-
 	const nfbtsIface = new ethers.Interface(json.abi);
 
-	const encodedCommand = nfbtsIface.encodeFunctionData('lazyPmtAmt', []);
-
-	let resObj = await readOnlyEVMFromMirrorNode(
-		env,
-		contractId,
-		encodedCommand,
-		operatorId,
-		false,
-	);
-
-	const currentAmount = nfbtsIface.decodeFunctionResult('lazyPmtAmt', resObj);
-
-	console.log('Current setting:', Number(currentAmount[0]), 'not adjusted for decimal');
-
-	const proceed = readlineSync.keyInYNStrict('Do you want to update the amount of $LAZY given (amount includes deciomal -> 1 $LAZY should be 10 here): ' + newAmount + '?');
-	if (!proceed) {
-		console.log('User Aborted');
-		return;
-	}
-
-	resObj = await contractExecuteFunction(
+	const paused = await contractExecuteFunction(
 		contractId,
 		nfbtsIface,
 		client,
-		operatorId,
-		'updateClaimAmount',
-		[newAmount],
+		null,
+		'updatePauseStatus',
+		[false],
 	);
 
-	console.log('Contract updated:', resObj[0]?.status?.toString(), 'txId:', resObj[2]?.transactionId?.toString());
+	console.log('Contract unpaused:', paused[0]?.status?.toString(), 'txId:', paused[2]?.transactionId?.toString());
 };
 
 main()

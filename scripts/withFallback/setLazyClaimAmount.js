@@ -22,7 +22,7 @@ catch (err) {
 	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
 }
 
-const contractName = 'NoFallbackTokenSwap';
+const contractName = 'FallbackTokenSwap';
 
 const env = process.env.ENVIRONMENT ?? null;
 let client;
@@ -94,9 +94,9 @@ const main = async () => {
 
 	const currentAmount = nfbtsIface.decodeFunctionResult('lazyPmtAmt', resObj);
 
-	console.log('Current setting:', Number(currentAmount[0]), 'not adjusted for decimal');
+	console.log('Current setting:', Number(currentAmount[0]));
 
-	const proceed = readlineSync.keyInYNStrict('Do you want to update the amount of $LAZY given (amount includes deciomal -> 1 $LAZY should be 10 here): ' + newAmount + '?');
+	const proceed = readlineSync.keyInYNStrict('Do you want to update the amount of $LAZY given: ' + newAmount + '?');
 	if (!proceed) {
 		console.log('User Aborted');
 		return;

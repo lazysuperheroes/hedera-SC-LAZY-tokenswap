@@ -20,7 +20,15 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 	using SafeCast for uint256;
 
 	error BadInput();
+	error ExceedsMaxSerials();
+	error AssociationFailed();
 	error ConfigNotFound(address token, uint256 serial);
+	error ContractPaused();
+	error NFTEOA2SCTransferFailed();
+	error NFTSC2TreasuryTransferFailed();
+	error NFTSC2EOATransferFailed();
+	error FTTransferFailed();
+	error StakingFailed();
 
 	uint256 private constant MAX_NFTS_PER_TX = 8;
 
@@ -65,7 +73,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 		int256 responseCode = associateTokens(address(this), _tokens);
 
 		if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert("Associating Tokens failed");
+			revert AssociationFailed();
         }
     }
 
@@ -116,7 +124,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 		int256 responseCode = associateTokens(address(this), _tokens);
 
 		if (responseCode != HederaResponseCodes.SUCCESS) {
-			revert("Batch Associating Tokens failed");
+			revert AssociationFailed();
 		}
 	}
 
@@ -142,9 +150,9 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 		address[] calldata tokensToSwap,
         uint256[] calldata serials
     ) external returns (uint256 amt) {
-        require(serials.length <= type(uint8).max, "Too many serials");
-		require(tokensToSwap.length == serials.length, "Tokens != serials");
-		require(!paused, "Contract is paused");
+		if (serials.length > type(uint8).max) revert ExceedsMaxSerials();
+        if (tokensToSwap.length != serials.length) revert BadInput();
+		if (paused) revert ContractPaused();
 		int256 responseCode;
 
 		/* 
@@ -239,7 +247,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 			// transfer the NFTs
 			responseCode = HederaTokenService.cryptoTransfer(_transfersFromEOA);
 			if (responseCode != HederaResponseCodes.SUCCESS) {
-            	revert("TokenSwap (step 1) NFT Transfer failed");
+            	revert NFTEOA2SCTransferFailed();
         	}
 
 			// 2. From SC to Treasury
@@ -257,7 +265,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 			// transfer the NFTs
 			responseCode = HederaTokenService.cryptoTransfer(_transfersSCToTsry);
 			if (responseCode != HederaResponseCodes.SUCCESS) {
-				revert("TokenSwap (step 2) NFT Transfer failed");
+				revert NFTSC2TreasuryTransferFailed();
 			}
 
 			// 3. From SC to EOA
@@ -275,7 +283,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 			// transfer the NFTs
 			responseCode = HederaTokenService.cryptoTransfer(_transfersToEOA);
 			if (responseCode != HederaResponseCodes.SUCCESS) {
-				revert("TokenSwap (step 3) NFT Transfer failed");
+				revert NFTSC2EOATransferFailed();
 			}
 			
 		}
@@ -284,7 +292,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 		if (amt == 0) return 0;
 
 		uint256 paid = lazyGasStation.payoutLazy(msg.sender, amt, 0);
-		if (paid != amt) revert("TokenSwap FT Transfer failed");
+		if (paid != amt) revert FTTransferFailed();
 
         emit TokenSwapEvent(
             msg.sender,
@@ -296,7 +304,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
         );
     }
 
-	// if the NFTs are held outside of the treasury we need a method topush them up 
+	// if the NFTs are held outside of the treasury we need a method to push them up 
 	// to the contract before the swap can be completed
 	function stakeNFTs(uint256[] calldata _serials) external {
 		if(IERC20(lazyToken).balanceOf(address(this)) < 20) {
@@ -365,7 +373,7 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 
 			if (response != HederaResponseCodes.SUCCESS) {
 				// could be $LAZY or serials causing the issue. Check $LAZY balance of contract first
-				revert("Staking tfer fail");
+				revert StakingFailed();
 			}
         }
 

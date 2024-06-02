@@ -3,6 +3,7 @@ const {
 	AccountId,
 	PrivateKey,
 	ContractId,
+	TokenId,
 } = require('@hashgraph/sdk');
 require('dotenv').config();
 const fs = require('fs');
@@ -22,7 +23,7 @@ catch (err) {
 	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
 }
 
-const contractName = 'NoFallbackTokenSwap';
+const contractName = 'FallbackTokenSwap';
 
 const BATCH = 75;
 
@@ -33,7 +34,7 @@ let client;
 const main = async () => {
 	// get the command line parameters
 	const args = process.argv.slice(2);
-	if (args.length != 1 || getArgFlag('h')) {
+	if (args.length != 2 || getArgFlag('h')) {
 		console.log('usage: node setupTokenSwapContract.js 0.0.CCC <path/to/file>');
 		console.log('		CCC is the contractId to update the claim amount');
 		console.log('		The path to the file containing the swap data');
@@ -45,20 +46,20 @@ const main = async () => {
 
 	// read in CSV file names in args[0] and parse each line
 	try {
-		fs.access(args[0], fs.constants.F_OK, (err) => {
+		fs.access(args[1], fs.constants.F_OK, (err) => {
 			if (err) {
-				console.log(`${args[0]} does not exist`, err);
+				console.log(`${args[1]} does not exist`, err);
 				return;
 			}
 		});
 	}
 	catch (err) {
-		console.log(`${args[0]} does not exist`, err);
+		console.log(`${args[1]} does not exist`, err);
 		return;
 	}
 
 	let lineNum = 0;
-	const allFileContents = fs.readFileSync(args[0], 'utf-8');
+	const allFileContents = fs.readFileSync(args[1], 'utf-8');
 	const lines = allFileContents.split(/\r?\n/);
 
 	const newSerialList = [];
@@ -75,7 +76,7 @@ const main = async () => {
 		const [token, oldSerial, newSerial] = line.split(',');
 
 		newSerialList.push(Number(newSerial));
-		swapHashList.push(ethers.utils.solidityKeccak256(['address', 'uint256'], [token, oldSerial]));
+		swapHashList.push(ethers.solidityPackedKeccak256(['address', 'uint256'], [TokenId.fromString(token).toSolidityAddress(), Number(oldSerial)]));
 
 		outputList.push([token, oldSerial, newSerial]);
 	}
@@ -128,7 +129,7 @@ const main = async () => {
 		for (let i = 0; i < newSerialList.length; i += BATCH) {
 			const topEnd = i + Math.min(BATCH, newSerialList.length - i);
 			console.log('Processing batch', i, '-', topEnd - 1);
-			const result = contractExecuteFunction(
+			const result = await contractExecuteFunction(
 				contractId,
 				nfbtsIface,
 				client,
@@ -136,7 +137,7 @@ const main = async () => {
 				'updateSwapConfig',
 				[newSerialList.slice(i, topEnd), swapHashList.slice(i, topEnd)],
 			);
-			console.log('Tx', i, '-', topEnd, ':', result);
+			console.log('Tx', i, '-', topEnd, ':', result[0].status.toString(), 'txId:', result[2].transactionId.toString());
 		}
 	}
 };
