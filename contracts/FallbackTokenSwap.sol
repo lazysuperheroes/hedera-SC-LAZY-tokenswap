@@ -155,6 +155,11 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 		if (paused) revert ContractPaused();
 		int256 responseCode;
 
+		// check if we need to refill the lazy token
+		if(IERC20(lazyToken).balanceOf(address(this)) < 20) {
+			lazyGasStation.refillLazy(50);
+		}
+
 		/* 
 			We will be doing 3 transfers per NFT
 			1. Old From EOA to SC
@@ -401,6 +406,26 @@ contract FallbackTokenSwap is HederaTokenService, Ownable {
 			"Hbar Transfer Complete"
 		);
     }
+
+	function retrieveLazy(
+		address _receiver,
+		int64 _amount
+	) external onlyOwner {
+		if (_receiver == address(0) || _amount == 0) {
+			revert BadInput();
+		}
+		// given latest Hedera security model need to move to allowance spends
+		int256 responseCode = transferToken(
+			lazyToken,
+			address(this),
+			_receiver,
+			_amount
+		);
+
+		if (responseCode != HederaResponseCodes.SUCCESS) {
+			revert FTTransferFailed();
+		}
+	}
 
     receive() external payable {
 		emit TokenSwapEvent(

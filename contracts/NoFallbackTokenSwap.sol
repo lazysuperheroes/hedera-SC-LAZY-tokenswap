@@ -255,6 +255,27 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		);
     }
 
+	function retrieveLazy(
+		address _receiver,
+		int64 _amount
+	) external onlyOwner {
+		if (_receiver == address(0) || _amount == 0) {
+			revert("Invalid address or amount");
+		}
+		// given latest Hedera security model need to move to allowance spends
+		int256 responseCode = transferToken(
+			lazyToken,
+			address(this),
+			_receiver,
+			_amount
+		);
+
+		if (responseCode != HederaResponseCodes.SUCCESS) {
+			revert("transferHTS - failed");
+		}
+	}
+
+
     receive() external payable {
 		emit TokenSwapEvent(
 			msg.sender,
