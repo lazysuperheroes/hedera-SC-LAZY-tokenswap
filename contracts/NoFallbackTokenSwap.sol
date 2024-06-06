@@ -123,7 +123,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		serials = new uint256[](swapHashes.length);
 		uint256 length = swapHashes.length;
 		for(uint256 i = 0; i < length; ) {
-			serials[i] = hashToSerialMap.get(swapHashes[i]);
+			(, serials[i]) = hashToSerialMap.tryGet(swapHashes[i]);
 			unchecked { ++i; }
 		}
 	}
