@@ -30,12 +30,16 @@ files.forEach((file) => {
 			readPath,
 		),
 	);
-	const abi = contractJSON.abi;
+	const extract = {
+		'contractName': contractJSON.contractName,
+		'sourceName': contractJSON.sourceName,
+		'abi': contractJSON.abi,
+	};
 	const writePath = path.join(cwd, abiDir, abiFileName);
 
 	fs.writeFileSync(
 		writePath,
-		JSON.stringify(abi, null, 4),
+		JSON.stringify(extract, null, 4),
 	);
 },
 );
