@@ -73,6 +73,7 @@ const main = async () => {
 			console.log(`\t${tokens[i].toString()}#${serials[i][j]} -> ${Number(decodedResult[0][counter])}`);
 			counter++;
 		}
+		console.log('found:', counter);
 	}
 };
 
