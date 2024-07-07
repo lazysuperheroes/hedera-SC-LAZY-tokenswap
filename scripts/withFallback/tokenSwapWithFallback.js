@@ -11,8 +11,8 @@ const { ethers } = require('ethers');
 const { getArgFlag } = require('../../utils/nodeHelpers');
 const { contractExecuteFunction } = require('../../utils/solidityHelpers');
 const readlineSync = require('readline-sync');
-const { setNFTAllowanceAll, associateTokenToAccount } = require('../../utils/hederaHelpers');
-const { checkMirrorBalance } = require('../../utils/hederaMirrorHelpers');
+const { setFTAllowance, setNFTAllowanceAll, associateTokenToAccount } = require('../../utils/hederaHelpers');
+const { checkMirrorBalance, checkMirrorAllowance } = require('../../utils/hederaMirrorHelpers');
 
 // Get operator from .env file
 let operatorKey;
@@ -44,8 +44,10 @@ const main = async () => {
 
 	const contractId = ContractId.fromString(args[0]);
 	const tokens = args[1].split(',').map((t) => TokenId.fromString(t));
+	// create token array as Solidity addresses
+	const tokenAddresses = tokens.map((t) => t.toSolidityAddress());
 	// create and array of arrays
-	const serials = args[2].split(':').map((s) => s.split(','));
+	const serials = args[2].split(':').map((s) => (s.split(',')));
 
 	if (tokens.length != serials.length) {
 		console.log('ERROR: Must have same number of tokens as serials');
@@ -60,43 +62,13 @@ const main = async () => {
 
 	const tokenArg = [];
 	const serialArg = [];
+	let totalSerials = 0;
 	for (let i = 0; i < tokens.length; i++) {
 		for (let j = 0; j < serials[i].length; j++) {
 			tokenArg.push(tokens[i]);
-			serialArg.push(serials[i][j]);
+			serialArg.push(parseInt(serials[i][j]));
+			totalSerials++;
 		}
-	}
-
-	let proceed = readlineSync.keyInYNStrict('Do you want to set (ALL) allowances needed for the swap?');
-	if (!proceed) {
-		console.log('User Aborted');
-		return;
-	}
-
-	const allowanceStatus = await setNFTAllowanceAll(client, tokens, operatorId, contractId);
-	console.log('Allowance Status:', allowanceStatus);
-
-	// check the user has Lazy Associated
-	const lazyBalance = await checkMirrorBalance(env, operatorId, lazyTokenId);
-	if (lazyBalance == 0) {
-		console.log('ERROR: Operator may not have $LAZY associated');
-
-		proceed = readlineSync.keyInYNStrict('Do you want to associate $LAZY?');
-		if (proceed) {
-			const status = await associateTokenToAccount(
-				client,
-				operatorId,
-				operatorKey,
-				lazyTokenId,
-			);
-			console.log('Associate $LAZY Status:', status);
-		}
-	}
-
-	proceed = readlineSync.keyInYNStrict('Do you want to swap the tokens?');
-	if (!proceed) {
-		console.log('User Aborted');
-		return;
 	}
 
 	if (env.toUpperCase() == 'TEST') {
@@ -125,6 +97,69 @@ const main = async () => {
 
 	client.setOperator(operatorId, operatorKey);
 
+	let proceed = readlineSync.keyInYNStrict('Do you want to set (ALL) allowances needed for the swap?');
+	if (!proceed) {
+		console.log('User Aborted');
+		return;
+	}
+
+	const allowanceStatus = await setNFTAllowanceAll(client, tokens, operatorId, contractId);
+	console.log('NFT Allowance Status:', allowanceStatus);
+
+	// check the user has Lazy Associated
+	const lazyBalance = await checkMirrorBalance(env, operatorId, lazyTokenId);
+	if (lazyBalance == 0) {
+		console.log('ERROR: Operator may not have $LAZY associated');
+
+		proceed = readlineSync.keyInYNStrict('Do you want to associate $LAZY?');
+		if (proceed) {
+			const status = await associateTokenToAccount(
+				client,
+				operatorId,
+				operatorKey,
+				lazyTokenId,
+			);
+			console.log('Associate $LAZY Status:', status);
+		}
+	}
+
+	// user will get some $LAZY when they swap the tokens as part of the initial NFT movement
+	// will need to set a $LAZY allowance for the contract to spend on behalf of the operator for the return leg
+
+
+	const requiredAllowance = Math.ceil(totalSerials / 8);
+
+	// check if they already have an allowance set
+	const lazyAllowance = await checkMirrorAllowance(
+		env,
+		operatorId,
+		lazyTokenId,
+		contractId,
+	);
+	if (lazyAllowance < requiredAllowance) {
+		console.log('Setting FT allowance for $LAZY:', requiredAllowance);
+
+		const fungibleAllowance = await setFTAllowance(
+			client,
+			lazyTokenId,
+			operatorId,
+			contractId,
+			requiredAllowance,
+		);
+
+		console.log('FT Allowance Status:', fungibleAllowance);
+	}
+	else {
+		console.log('Operator has sufficient $LAZY allowance');
+	}
+
+
+	proceed = readlineSync.keyInYNStrict('Do you want to swap the tokens?');
+	if (!proceed) {
+		console.log('User Aborted');
+		return;
+	}
+
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
 	const nfbtsIface = new ethers.Interface(json.abi);
 
@@ -134,7 +169,7 @@ const main = async () => {
 		client,
 		350_000 + 100_000 * tokens.length,
 		'swapNFTs',
-		[tokens, serials],
+		[tokenAddresses, serialArg],
 	);
 
 	console.log('$LAZY Received:', result[1]?.toString());
