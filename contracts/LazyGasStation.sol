@@ -20,9 +20,15 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 	using EnumerableSet for EnumerableSet.AddressSet;
 	using Address for address;
 
+	enum PaymentType {
+		Hbar,
+		Lazy
+	}
+
 	event GasStationRefillEvent(
 		address indexed _callingContract,
-		uint256 _amount
+		uint256 _amount,
+		PaymentType _type
 	);
 
 	event GasStationFunding(
@@ -47,6 +53,16 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 	address public lazyToken;
 	address public lazySCT;
 
+	error AssociationFailed();
+	error Empty(uint256 _required, uint256 _available);
+	error BadInput();
+	error PayoutFailed();
+	error NetPayoutFailed();
+	error BurnFailed();
+	error LastAdmin();
+	error InsufficientAllowance();
+	error ToLGSTransferFailed();
+
 	constructor(
 		address _lazyToken,
 		address _lazySCT
@@ -60,7 +76,7 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		);
 
 		if (response != HederaResponseCodes.SUCCESS) {
-			revert("Associate Failed");
+			revert AssociationFailed();
 		}
 
 		admins.add(msg.sender);
@@ -87,25 +103,59 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		_;
 	}
 
+	/// @notice Refill the calling contract with Lazy tokens
+	/// @param _amount The amount of Lazy tokens to refill
 	function refillLazy(
 		uint256 _amount
 	) external onlyContractUser nonReentrant {
-		require(IERC20(lazyToken).balanceOf(address(this)) >= _amount, "$LAZY Gas Station Empty");
-		require(_amount > 0, "Invalid amount");
+		if (IERC20(lazyToken).balanceOf(address(this)) < _amount) {
+			revert Empty(_amount, IERC20(lazyToken).balanceOf(address(this)));
+		}
+		if (_amount == 0) {
+			revert BadInput();
+		}
 
 		bool result = IERC20(lazyToken).transfer(msg.sender, _amount);
-		require(result, "Transfer failed");
+		if (!result) {
+			revert PayoutFailed();
+		}
 
-		emit GasStationRefillEvent(msg.sender, _amount);
+		emit GasStationRefillEvent(msg.sender, _amount, PaymentType.Lazy);
 	}
 
+	/// @notice Refill the calling contract with Hbar
+	/// @param _amount The amount of Hbar to refill
+	function refillHbar(
+		uint256 _amount
+	) external payable onlyContractUser nonReentrant {
+		// check the contract has enough hbar
+		if (address(this).balance < _amount) {
+			revert Empty(_amount, address(this).balance);
+		}
+		if (_amount == 0) {
+			revert BadInput();
+		}
+
+		Address.sendValue(payable(msg.sender), _amount);
+
+		emit GasStationRefillEvent(msg.sender, _amount, PaymentType.Hbar);
+	}
+
+	/// @notice Pay out Lazy tokens to a user
+	/// @param _user The address of the user to pay out to
+	/// @param _amount The amount of Lazy tokens to pay out
+	/// @param _burnPercentage The percentage of the payout to burn
 	function payoutLazy(
 		address _user,
 		uint256 _amount,
 		uint256 _burnPercentage
 	) external onlyContractUser nonReentrant returns (uint256 _payoutAmount) {
-		require(_amount > 0, "Invalid amount");
-		require(_burnPercentage <= 100, "Invalid burn percentage");
+		if (_amount == 0 || _burnPercentage > 100) {
+			revert BadInput();
+		}		
+		else if (IERC20(lazyToken).balanceOf(address(this)) < _amount) {
+			revert Empty(_amount, IERC20(lazyToken).balanceOf(address(this)));
+		}
 
 		uint256 burnAmt = (_amount * _burnPercentage) / 100;
 
@@ -117,7 +167,7 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 			);
 
 			if (responseCode != HederaResponseCodes.SUCCESS) {
-				revert("burning $LAZY - fail");
+				revert BurnFailed();
 			}
 
 			// pay out the remainder to the user
@@ -127,7 +177,9 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 					_user,
 					remainder
 				);
-				require(result, "LGS payout (net) fail");
+				if (!result) {
+					revert NetPayoutFailed();
+				}
 			}
 			_payoutAmount = remainder;
 		}
@@ -136,13 +188,19 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 				_user,
 				_amount
 			);
-			require(result, "LAZY payout fail");
+			if (!result) {
+				revert PayoutFailed();
+			}
 			_payoutAmount = _amount;
 		}
 
 		emit GasStationFunding(msg.sender, _user, _amount, _burnPercentage, false);
 	}
 
+	/// @notice Take Lazy tokens from a user to centralize the allowances
+	/// @param _user The address of the user to pay out to
+	/// @param _amount The amount of Lazy tokens to pay out
+	/// @param _burnPercentage The percentage of the payout to burn
 	function drawLazyFrom(
 		address _user,
 		uint256 _amount,
@@ -151,19 +209,23 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		drawLazyFromPayTo(_user, _amount, _burnPercentage, address(this));
 	}
 
+	/// @notice Take Lazy tokens from a user to centralize the allowances and pay out to a nominated address
+	/// @param _user The address of the user to pay out to
+	/// @param _amount The amount of Lazy tokens to pay out
+	/// @param _burnPercentage The percentage of the payout to burn
+	/// @param _payTo The address to pay out to
 	function drawLazyFromPayTo(
 		address _user,
 		uint256 _amount,
 		uint256 _burnPercentage,
 		address _payTo
 	) public onlyContractUser nonReentrant {
-		require(
-            IERC20(lazyToken).allowance(_user, address(this)) >= _amount,
-            "Insufficient $LAZY allowance"
-        );
-		require(_amount > 0, "Invalid amount");
-		require(_burnPercentage <= 100, "Invalid burn percentage");
-		require(_payTo != address(0), "Invalid address");
+		if (IERC20(lazyToken).allowance(_user, address(this)) < _amount) {
+			revert InsufficientAllowance();
+		}
+		else if (_amount == 0 || _burnPercentage > 100 || _payTo == address(0)) {
+			revert BadInput();
+		}
 
 		uint256 burnAmt = (_amount * _burnPercentage) / 100;
 
@@ -175,17 +237,19 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 				address(this),
 				_amount
 			);
-			require(result, "2LGS Tfr fail");
+			if (!result) {
+				revert ToLGSTransferFailed();
+			}
 			int256 responseCode = IBurnableHTS(lazySCT).burn(
                 lazyToken,
                 burnAmt.toUint32()
             );
 
             if (responseCode != HederaResponseCodes.SUCCESS) {
-                revert("burning $LAZY - fail");
+                revert BurnFailed();
             }
 
-			// send the remainder to the mission factory
+			// send the remainder to nominated address
 			uint256 remainder = _amount - burnAmt;
 			if (remainder > 0 && _payTo != address(this)) {
 				result = IERC20(lazyToken).transferFrom(
@@ -193,7 +257,9 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 					_payTo,
 					remainder
 				);
-				require(result, "LGS PayTo fail");
+				if (!result) {
+					revert NetPayoutFailed();
+				}
 			}
 		}
 		else {
@@ -202,12 +268,16 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 				_payTo,
 				_amount
 			);
-			require(result, "LAZY Tfr fail");
+			if (!result) {
+				revert PayoutFailed();
+			}
 		}
 
 		emit GasStationFunding(msg.sender, _user, _amount, _burnPercentage, true);
 	}
 
+	/// @notice Add an Admin user to the Gas Station
+	/// @param _admin The address of the user to pay out to
 	function addAdmin(
 		address _admin
 	) external onlyAdmin returns (bool _added){
@@ -215,14 +285,20 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		return admins.add(_admin);
 	}
 
+	/// @notice Remove an Admin user from the Gas Station
+	/// @param _admin The address of the user to pay out to
 	function removeAdmin(
 		address _admin
 	) external onlyAdmin returns (bool _removed){
-		require(admins.length() > 1, "Last Admin");
+		if (admins.length() == 1) {
+			revert LastAdmin();
+		}
 		emit GasStationAccessControlEvent(msg.sender, _admin, false, Role.Admin);
 		return admins.remove(_admin);
 	}
 
+	/// @notice Add an Authorizer user to the Gas Station
+	/// @param _authorized A contract authorized to add other contracts
 	function addAuthorizer(
 		address _authorized
 	) external onlyAdmin returns (bool _added){
@@ -230,6 +306,8 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		return authorizers.add(_authorized);
 	}
 
+	/// @notice Remove an Authorizer user from the Gas Station
+	/// @param _authorized A contract authorized to add other contracts
 	function removeAuthorizer(
 		address _authorized
 	) external onlyAdmin returns (bool _removed){
@@ -237,15 +315,20 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		return authorizers.remove(_authorized);
 	}
 
+	/// @notice Add a contract user (who can call for refills) to the Gas Station
+	/// @param _deployer contract user to add
 	function addContractUser(
 		address _deployer
 	) external onlyAdminOrAuthorizer returns (bool _added){
-		require(_deployer != address(0), "Invalid address");
-		require(_deployer.isContract(), "EOA Address");
+		if (_deployer == address(0) || !_deployer.isContract()) {
+			revert BadInput();
+		}
 		emit GasStationAccessControlEvent(msg.sender, _deployer, true, Role.GasStationContractUser);
 		return contractUsers.add(_deployer);
 	}
 
+	/// @notice Remove a contract user (who can call for refills) from the Gas Station
+	/// @param _deployer contract user to remove
 	function removeContractUser(
 		address _deployer
 	) external onlyAdminOrAuthorizer returns (bool _removed){
@@ -253,46 +336,58 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		return contractUsers.remove(_deployer);
 	}
 
+	/// @notice Get the list of Admins
 	function getAdmins() external view returns (address[] memory _admins) {
 		return admins.values();
 	}
 
+	/// @notice Get the list of Authorizers
 	function getAuthorizers() external view returns (address[] memory _authorizers) {
 		return authorizers.values();
 	}
 
+	/// @notice Get the list of Contract Users
 	function getContractUsers() external view returns (address[] memory _contractUsers) {
 		return contractUsers.values();
 	}
 
+	/// @notice Check if an address is an Admin
 	function isAdmin(address _admin) external view returns (bool _isAdmin) {
 		return admins.contains(_admin);
 	}
 
+	/// @notice Check if an address is an Authorizer
 	function isAuthorizer(address _authorizer) external view returns (bool _isAuthorizer) {
 		return authorizers.contains(_authorizer);
 	}
 
+	/// @notice Check if an address is a Contract User
 	function isContractUser(address _contractUser) external view returns (bool _isContractUser) {
 		return contractUsers.contains(_contractUser);
 	}
 
+	/// @notice Transfer Hbar from the contract to a receiver
+	/// @param receiverAddress The address to send the Hbar to
+	/// @param amount The amount of Hbar to send
     function transferHbar(address payable receiverAddress, uint256 amount)
         external
         onlyAdmin()
     {
 		if (receiverAddress == address(0) || amount == 0) {
-			revert("Invalid address or amount");
+			revert BadInput();
 		}
 		Address.sendValue(receiverAddress, amount);
     }
 
+	/// @notice Retrieve Lazy tokens from the contract
+	/// @param _receiver The address to send the Lazy tokens to
+	/// @param _amount The amount of Lazy tokens to send
 	function retrieveLazy(
 		address _receiver,
 		uint256 _amount
 	) external onlyAdmin() {
 		if (_receiver == address(0) || _amount == 0) {
-			revert("Invalid address or amount");
+			revert BadInput();
 		}
 
 		IERC20(lazyToken).transfer(_receiver, _amount);

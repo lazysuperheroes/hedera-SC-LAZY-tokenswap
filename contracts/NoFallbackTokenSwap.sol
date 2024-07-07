@@ -260,7 +260,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		int64 _amount
 	) external onlyOwner {
 		if (_receiver == address(0) || _amount == 0) {
-			revert("Invalid address or amount");
+			revert BadInput();
 		}
 		// given latest Hedera security model need to move to allowance spends
 		int256 responseCode = transferToken(
@@ -271,7 +271,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
 		);
 
 		if (responseCode != HederaResponseCodes.SUCCESS) {
-			revert("transferHTS - failed");
+			revert FTTransferFailed();
 		}
 	}
 

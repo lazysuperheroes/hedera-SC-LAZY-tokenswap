@@ -473,7 +473,7 @@ describe('Deployment: ', function() {
 		}
 
 		// check the GasStationAccessControlEvent on the mirror node
-		await sleep(4500);
+		await sleep(5000);
 		const lgsEvent = await checkLastMirrorEvent(
 			env,
 			lazyGasStationId,
@@ -482,9 +482,10 @@ describe('Deployment: ', function() {
 			true,
 		);
 
-		expect(lgsEvent.toSolidityAddress().toLowerCase()).to.be.equal(
-			contractId.toSolidityAddress(),
-		);
+		if (lgsEvent.toSolidityAddress().toLowerCase() != contractId.toSolidityAddress().toLowerCase()) {
+			console.log('ERROR: GasStationAccessControlEvent not found:', lgsEvent);
+			fail();
+		}
 
 		client.setOperator(aliceId, alicePK);
 		// treasury (Alice) needs to set an allowance for the swap contract
