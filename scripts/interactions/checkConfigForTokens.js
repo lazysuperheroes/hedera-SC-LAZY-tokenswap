@@ -34,7 +34,7 @@ const main = async () => {
 	}
 
 	console.log('\n-Using ENIVRONMENT:', env);
-	console.log('\n-Checking config for contract:', contractId);
+	console.log('\n-Checking config for contract:', contractId.toString());
 
 	const hashList = [];
 	for (let i = 0; i < tokens.length; i++) {
@@ -70,7 +70,7 @@ const main = async () => {
 
 	for (let i = 0; i < tokens.length; i++) {
 		for (let j = 0; j < serials[i].length; j++) {
-			console.log(`\t${tokens[i].toString()}#${serials[i][j]} -> ${Number(decodedResult[counter])}`);
+			console.log(`\t${tokens[i].toString()}#${serials[i][j]} -> ${Number(decodedResult[0][counter])}`);
 			counter++;
 		}
 	}

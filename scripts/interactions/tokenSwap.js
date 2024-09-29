@@ -42,6 +42,33 @@ const main = async () => {
 		return;
 	}
 
+	if (env.toUpperCase() == 'TEST') {
+		client = Client.forTestnet();
+		console.log('testing in *TESTNET*');
+	}
+	else if (env.toUpperCase() == 'MAIN') {
+		client = Client.forMainnet();
+		console.log('testing in *MAINNET*');
+	}
+	else if (env.toUpperCase() == 'PREVIEW') {
+		client = Client.forPreviewnet();
+		console.log('testing in *PREVIEWNET*');
+	}
+	else if (env.toUpperCase() == 'LOCAL') {
+		const node = { '127.0.0.1:50211': new AccountId(3) };
+		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
+		console.log('testing in *LOCAL*');
+	}
+	else {
+		console.log(
+			'ERROR: Must specify either MAIN or TEST or LOCAL as environment in .env file',
+		);
+		return;
+	}
+
+	client.setOperator(operatorId, operatorKey);
+
+
 	const contractId = ContractId.fromString(args[0]);
 	const tokens = args[1].split(',').map((t) => TokenId.fromString(t));
 	// create and array of arrays
@@ -60,10 +87,12 @@ const main = async () => {
 
 	const tokenArg = [];
 	const serialArg = [];
+	const tokensAsSolidity = [];
 	for (let i = 0; i < tokens.length; i++) {
 		for (let j = 0; j < serials[i].length; j++) {
 			tokenArg.push(tokens[i]);
-			serialArg.push(serials[i][j]);
+			tokensAsSolidity.push(tokens[i].toSolidityAddress());
+			serialArg.push(Number(serials[i][j]));
 		}
 	}
 
@@ -99,42 +128,18 @@ const main = async () => {
 		return;
 	}
 
-	if (env.toUpperCase() == 'TEST') {
-		client = Client.forTestnet();
-		console.log('testing in *TESTNET*');
-	}
-	else if (env.toUpperCase() == 'MAIN') {
-		client = Client.forMainnet();
-		console.log('testing in *MAINNET*');
-	}
-	else if (env.toUpperCase() == 'PREVIEW') {
-		client = Client.forPreviewnet();
-		console.log('testing in *PREVIEWNET*');
-	}
-	else if (env.toUpperCase() == 'LOCAL') {
-		const node = { '127.0.0.1:50211': new AccountId(3) };
-		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
-		console.log('testing in *LOCAL*');
-	}
-	else {
-		console.log(
-			'ERROR: Must specify either MAIN or TEST or LOCAL as environment in .env file',
-		);
-		return;
-	}
-
-	client.setOperator(operatorId, operatorKey);
-
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
 	const nfbtsIface = new ethers.Interface(json.abi);
+
+	console.log('\n-Executing swap...');
 
 	const result = await contractExecuteFunction(
 		contractId,
 		nfbtsIface,
 		client,
-		250_000 + 75_000 * tokens.length,
+		250_000 + 75_000 * serialArg.length,
 		'swapNFTs',
-		[tokens, serials],
+		[tokensAsSolidity, serialArg],
 	);
 
 	console.log('$LAZY Received:', result[1]?.toString());
