@@ -6,7 +6,7 @@
   "scripts": {
     "test": "npx hardhat test",
     "test-nfb": "npx hardhat test test/NoFallbackTokenSwap.test.js",
-	"test-fb": "npx hardhat test test/FallbackTokenSwap.test.js",
+    "test-fb": "npx hardhat test test/FallbackTokenSwap.test.js",
     "deploy": "npx hardhat run scripts/deploy.js",
     "logs": "node scripts/getContractLogs.js",
     "solhint": "npx solhint -f table contracts/**/*.sol"
@@ -38,7 +38,7 @@
     "@types/chai": "^4.2.0",
     "@types/mocha": ">=9.1.0",
     "chai": "4",
-    "eslint": "^8.21.0",
+    "eslint": "^9.11.1",
     "hardhat": "^2.10.1",
     "hardhat-gas-reporter": "^1.0.8",
     "solhint": "4",

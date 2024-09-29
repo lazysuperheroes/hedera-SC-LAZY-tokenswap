@@ -97,7 +97,7 @@ const main = async () => {
 
 	// read in the contract to add to LGS on commandline with read-line
 	const swapContractId = readlineSync.question(
-		'Enter the Mission Factory Contract ID: ',
+		'Enter the Swap Contract ID: ',
 	);
 
 	const addressRegex = /(\d+\.\d+\.[1-9]\d+)/i;
