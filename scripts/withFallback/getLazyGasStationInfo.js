@@ -2,51 +2,51 @@ const {
 	AccountId,
 	ContractId,
 } = require('@hashgraph/sdk');
-require('dotenv').config();
 const fs = require('fs');
 const { ethers } = require('ethers');
 const { readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers');
 const { getArgFlag } = require('../../utils/nodeHelpers');
-
-// Get operator from .env file
-let operatorId;
-try {
-	operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-}
-catch (err) {
-	console.log('ERROR: Must specify ACCOUNT_ID in the .env file');
-}
+const { initializeClient } = require('../../utils/clientFactory');
 
 const contractName = 'LazyGasStation';
 
-const env = process.env.ENVIRONMENT ?? null;
+function showHelp() {
+	console.log(`
+Usage: node getLazyGasStationInfo.js <lgs-id>
+
+Query and display LazyGasStation configuration (admins, authorizers, contract users).
+
+Arguments:
+  <lgs-id>    LazyGasStation contract ID (e.g., 0.0.123456)
+
+Options:
+  -h, --help    Show this help message
+  --json        Output results in JSON format
+
+Example:
+  node getLazyGasStationInfo.js 0.0.123456
+`);
+}
 
 const main = async () => {
-	// configure the client object
-	if (
-		operatorId === undefined ||
-		operatorId == null
-	) {
-		console.log(
-			'Environment required, please specify ACCOUNT_ID in the .env file',
-		);
-		process.exit(1);
+	const args = process.argv.slice(2).filter(arg => !arg.startsWith('-'));
+	const jsonOutput = getArgFlag('json');
+
+	if (args.length != 1 || getArgFlag('h') || getArgFlag('help')) {
+		showHelp();
+		process.exit(args.length === 1 ? 0 : 1);
 	}
 
-	const args = process.argv.slice(2);
-	if (args.length != 1 || getArgFlag('h')) {
-		console.log('Usage: getLazyGasStationInfo.js 0.0.LGS');
-		console.log('       LGS is the LazyGasStation address');
-		return;
-	}
+	// Initialize client to get env (client not needed for read-only)
+	const { operatorId, env } = initializeClient();
 
 	const contractId = ContractId.fromString(args[0]);
 
-	console.log('\n-Using ENIVRONMENT:', env);
-	console.log('\n-Using Operator:', operatorId.toString());
-	console.log('\n-Using Contract:', contractId.toString());
+	if (!jsonOutput) {
+		console.log('\n-Using Contract:', contractId.toString());
+	}
 
-	// import ABI
+	// Import ABI
 	const lgsJSON = JSON.parse(
 		fs.readFileSync(
 			`./artifacts/contracts/${contractName}.sol/${contractName}.json`,
@@ -55,9 +55,8 @@ const main = async () => {
 
 	const lgsIface = new ethers.Interface(lgsJSON.abi);
 
-	// query the EVM via mirror node (readOnlyEVMFromMirrorNode) to know
+	// Query the EVM via mirror node
 	// 1) getAdmins
-
 	let encodedCommand = lgsIface.encodeFunctionData('getAdmins', []);
 
 	let result = await readOnlyEVMFromMirrorNode(
@@ -68,15 +67,10 @@ const main = async () => {
 		false,
 	);
 
-	const admins = lgsIface.decodeFunctionResult(
-		'getAdmins',
-		result,
-	);
-
-	console.log('Admins:', admins[0].map((a) => AccountId.fromEvmAddress(0, 0, a).toString()).join(', '));
+	const admins = lgsIface.decodeFunctionResult('getAdmins', result);
+	const adminsList = admins[0].map((a) => AccountId.fromEvmAddress(0, 0, a).toString());
 
 	// 2) getAuthorizers
-
 	encodedCommand = lgsIface.encodeFunctionData('getAuthorizers', []);
 
 	result = await readOnlyEVMFromMirrorNode(
@@ -87,15 +81,10 @@ const main = async () => {
 		false,
 	);
 
-	const authorizers = lgsIface.decodeFunctionResult(
-		'getAuthorizers',
-		result,
-	);
-
-	console.log('Authorizers:', authorizers[0].map((a) => AccountId.fromEvmAddress(0, 0, a).toString()).join(', '));
+	const authorizers = lgsIface.decodeFunctionResult('getAuthorizers', result);
+	const authorizersList = authorizers[0].map((a) => AccountId.fromEvmAddress(0, 0, a).toString());
 
 	// 3) getContractUsers
-
 	encodedCommand = lgsIface.encodeFunctionData('getContractUsers', []);
 
 	result = await readOnlyEVMFromMirrorNode(
@@ -106,19 +95,26 @@ const main = async () => {
 		false,
 	);
 
-	const contractUsers = lgsIface.decodeFunctionResult(
-		'getContractUsers',
-		result,
-	);
+	const contractUsers = lgsIface.decodeFunctionResult('getContractUsers', result);
+	const contractUsersList = contractUsers[0].map((a) => AccountId.fromEvmAddress(0, 0, a).toString());
 
-	console.log('Contract Users:', contractUsers[0].map((a) => AccountId.fromEvmAddress(0, 0, a).toString()).join(', '));
+	if (jsonOutput) {
+		console.log(JSON.stringify({
+			contract: contractId.toString(),
+			admins: adminsList,
+			authorizers: authorizersList,
+			contractUsers: contractUsersList,
+		}, null, 2));
+	} else {
+		console.log('Admins:', adminsList.join(', '));
+		console.log('Authorizers:', authorizersList.join(', '));
+		console.log('Contract Users:', contractUsersList.join(', '));
+	}
 };
 
 main()
-	.then(() => {
-		process.exit(0);
-	})
-	.catch((error) => {
-		console.error(error);
+	.then(() => process.exit(0))
+	.catch(error => {
+		console.error('ERROR:', error.message || error);
 		process.exit(1);
 	});

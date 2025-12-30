@@ -82,7 +82,7 @@ describe('Deployment: ', function() {
 			process.exit(1);
 		}
 
-		console.log('\n-Using ENIVRONMENT:', env);
+		console.log('\n-Using ENVIRONMENT:', env);
 
 		if (env.toUpperCase() == 'TEST') {
 			client = Client.forTestnet();
@@ -337,7 +337,7 @@ describe('Deployment: ', function() {
 		nfbtsIface = new ethers.Interface(json.abi);
 
 		const contractBytecode = json.bytecode;
-		const gasLimit = 1_100_000;
+		const gasLimit = 4_500_000;
 
 		console.log('\n- Deploying contract...', contractName, '\n\tgas@', gasLimit);
 

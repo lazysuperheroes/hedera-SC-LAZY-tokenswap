@@ -52,7 +52,6 @@ async function accountCreator(
  * @param {number} decimal
  * @returns {[string, TokenId]} status and token ID object
  */
-// eslint-disable-next-line no-unused-vars
 async function mintFT(
 	client,
 	acct,
@@ -80,6 +79,12 @@ async function mintFT(
 
 /**
  * Helper function to send FTs
+ * @param {Client} client
+ * @param {TokenId} FTTokenId
+ * @param {Number} amount
+ * @param {AccountId} sender
+ * @param {AccountId} receiver
+ * @param {String} memo
  */
 async function sendFT(client, FTTokenId, amount, sender, receiver, memo) {
 	const transferTx = new TransferTransaction()
@@ -98,12 +103,12 @@ async function sendFT(client, FTTokenId, amount, sender, receiver, memo) {
  * Assumes sender minted the NFT/no royalty issues
  * @param {Client} client
  * @param {AccountId} sender
- * @param {AccountId} reciever
+ * @param {AccountId} receiver
  * @param {TokenId} NFTTokenId
  * @param {Number[]} serials
  * @returns {String} status of the transaction
  */
-async function sendNFT(client, sender, reciever, NFTTokenId, serials) {
+async function sendNFT(client, sender, receiver, NFTTokenId, serials) {
 	// use inner/outer loop to maxSupply but in batches of 10
 
 	let batch = 0;
@@ -114,7 +119,7 @@ async function sendNFT(client, sender, reciever, NFTTokenId, serials) {
 		);
 		for (let i = 0; i < 10 && outer + i < serials.length; i++) {
 			const nft = new NftId(NFTTokenId, serials[outer + i]);
-			transferTx.addNftTransfer(nft, sender, reciever);
+			transferTx.addNftTransfer(nft, sender, receiver);
 		}
 
 		const txResp = await transferTx.freezeWith(client).execute(client);
@@ -196,7 +201,7 @@ async function sendNFTWithAllowance(
  * @param {AccountId} _spenderId
  * @returns {String} status of the transaction
  */
-async function setNFTAllowanceAll(client, _tokenIdList, _ownerId, _spenderId) {
+async function setNFTAllowanceAll(client, _tokenIdList, _ownerId, _spenderId, memo = null) {
 	// use an inner/outer loop to maxSupply but in batches of 20
 	let batch = 0;
 	for (let outer = 0; outer < _tokenIdList.length; outer += 20) {
@@ -213,9 +218,10 @@ async function setNFTAllowanceAll(client, _tokenIdList, _ownerId, _spenderId) {
 				_spenderId,
 			);
 		}
-		approvalTx.setTransactionMemo(
-			`NFT  (all serials) allowance (batch ${batch++})`,
-		);
+		const memoText = memo
+			? `${memo} (batch ${batch++})`
+			: `NFT  (all serials) allowance (batch ${batch++})`;
+		approvalTx.setTransactionMemo(memoText);
 		approvalTx.freezeWith(client);
 		const exResp = await approvalTx.execute(client);
 		const receipt = await exResp.getReceipt(client).catch((e) => {
@@ -421,7 +427,7 @@ async function setNFTAllowance(
  * @param {*} _spenderId the spender to authorize
  * @param {Number} amount amount to approve
  */
-async function setFTAllowance(client, _tokenId, _ownerId, _spenderId, amount) {
+async function setFTAllowance(client, _tokenId, _ownerId, _spenderId, amount, memo = null) {
 	const approvalTx =
 		new AccountAllowanceApproveTransaction().approveTokenAllowance(
 			_tokenId,
@@ -429,6 +435,9 @@ async function setFTAllowance(client, _tokenId, _ownerId, _spenderId, amount) {
 			_spenderId,
 			amount,
 		);
+	if (memo) {
+		approvalTx.setTransactionMemo(memo);
+	}
 	approvalTx.freezeWith(client);
 	const exResp = await approvalTx.execute(client);
 	const receipt = await exResp.getReceipt(client).catch((e) => {
@@ -447,6 +456,38 @@ async function setFTAllowance(client, _tokenId, _ownerId, _spenderId, amount) {
 		receipt?.status?.toString(),
 	);
 	return receipt?.status?.toString();
+}
+
+/**
+ * Helper to set an hbar allowance
+ * @param {Client} client
+ * @param {AccountId} _ownerId
+ * @param {AccountId} _spenderId
+ * @param {Number} _amount
+ * @param {HbarUnit} hbarUnit
+ * @returns {String} status of the transaction
+ */
+async function setHbarAllowance(client, _ownerId, _spenderId, _amount, hbarUnit = HbarUnit.Tinybar) {
+	const approvalTx = new AccountAllowanceApproveTransaction()
+		.approveHbarAllowance(_ownerId, _spenderId, new Hbar(_amount, hbarUnit))
+		.freezeWith(client);
+
+	const exResp = await approvalTx.execute(client);
+	const receipt = await exResp.getReceipt(client).catch((e) => {
+		console.log(e);
+		console.log('Hbar Allowance set **FAILED**');
+	});
+
+	console.log(
+		'Hbar Allowance:',
+		_amount,
+		'owner',
+		_ownerId.toString(),
+		'for',
+		_spenderId.toString(),
+		receipt.status.toString(),
+	);
+	return receipt.status.toString();
 }
 
 /**
@@ -646,16 +687,22 @@ async function sendFTWithAllowance(
  * @param {Hbar} amount
  */
 async function sweepHbar(client, sourceId, sourcePK, targetId, amount) {
-	const sweepTx = new TransferTransaction()
-		.addHbarTransfer(targetId, amount)
-		.addHbarTransfer(sourceId, amount.negated())
-		.freezeWith(client);
+	try {
+		const sweepTx = new TransferTransaction()
+			.addHbarTransfer(targetId, amount)
+			.addHbarTransfer(sourceId, amount.negated())
+			.freezeWith(client);
 
-	const signedTx = await sweepTx.sign(sourcePK);
-	const txResp = await signedTx.execute(client);
+		const signedTx = await sweepTx.sign(sourcePK);
+		const txResp = await signedTx.execute(client);
 
-	const transferRx = await txResp.getReceipt(client);
-	return transferRx.status.toString();
+		const transferRx = await txResp.getReceipt(client);
+		return transferRx.status.toString();
+	}
+	catch (error) {
+		console.error('Error sweeping HBAR from:', sourceId.toString(), 'to:', targetId.toString(), 'amount:', amount.toString(), error);
+		return 'ERROR';
+	}
 }
 
 module.exports = {
@@ -667,6 +714,7 @@ module.exports = {
 	setNFTAllowanceAll,
 	setNFTAllowance,
 	setFTAllowance,
+	setHbarAllowance,
 	sendHbar,
 	associateTokenToAccount,
 	associateTokensToAccount,

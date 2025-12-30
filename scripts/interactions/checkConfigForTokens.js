@@ -3,42 +3,70 @@ const {
 	AccountId,
 	TokenId,
 } = require('@hashgraph/sdk');
-require('dotenv').config();
 const fs = require('fs');
 const { getArgFlag } = require('../../utils/nodeHelpers');
 const { ethers } = require('ethers');
 const { readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers');
+const { initializeClient } = require('../../utils/clientFactory');
 
-const env = process.env.ENVIRONMENT ?? null;
 const contractName = 'NoFallbackTokenSwap';
 
+function showHelp() {
+	console.log(`
+Usage: node checkConfigForTokens.js <contract-id> <tokens> <serials>
+
+Check swap configuration for specific tokens on a NoFallbackTokenSwap contract.
+
+Arguments:
+  <contract-id>    Contract ID to check (e.g., 0.0.123456)
+  <tokens>         Comma-separated token IDs (e.g., 0.0.XXX,0.0.YYY)
+  <serials>        Colon-delimited serial groups matching tokens (e.g., 1,2:3,4)
+
+Options:
+  -h, --help    Show this help message
+  --json        Output results in JSON format
+
+Example:
+  node checkConfigForTokens.js 0.0.123 0.0.456,0.0.789 1,2:3,4
+
+  This checks serials 1,2 from token 0.0.456 and serials 3,4 from token 0.0.789
+`);
+}
+
 const main = async () => {
-	const args = process.argv.slice(2);
-	if (args.length != 3 || getArgFlag('h')) {
-		console.log('Usage: checkConfigForTokens.js 0.0.CCC 0.0.XXX,0.0.YYY X1,X2,X3:Y1,Y2,Y3');
-		console.log('		CCC is the swap contractId to check config');
-		console.log('		0.0.XXX,0.0.YYY are the tokens to swap in same order as the serials');
-		console.log('		X,Y,Z are the serials to swap in same order as the tokenIds delimited by :');
-		console.log('example: checkConfigForTokens.js 0.0.123 0.0.456,0.0.789 1,2:3,4');
-		return;
+	const args = process.argv.slice(2).filter(arg => !arg.startsWith('-'));
+	const jsonOutput = getArgFlag('json');
+
+	if (args.length != 3 || getArgFlag('h') || getArgFlag('help')) {
+		showHelp();
+		process.exit(args.length === 3 ? 0 : 1);
 	}
+
+	// Initialize client to get env (client not needed for read-only)
+	const { env } = initializeClient();
 
 	const contractId = ContractId.fromString(args[0]);
 	const tokens = args[1].split(',').map((t) => TokenId.fromString(t));
-	// create and array of arrays
 	const serials = args[2].split(':').map((s) => s.split(','));
 
 	if (tokens.length != serials.length) {
-		console.error('Error: Number of tokens and serials do not match');
-		return;
+		if (jsonOutput) {
+			console.log(JSON.stringify({ error: 'Number of tokens and serials do not match' }));
+		} else {
+			console.error('ERROR: Number of tokens and serials do not match');
+		}
+		process.exit(1);
 	}
 
-	console.log('\n-Using ENIVRONMENT:', env);
-	console.log('\n-Checking config for contract:', contractId.toString());
+	if (!jsonOutput) {
+		console.log('\n-Checking config for contract:', contractId.toString());
+	}
 
 	const hashList = [];
 	for (let i = 0; i < tokens.length; i++) {
-		console.log('\tToken:', tokens[i].toString(), 'Serial(s):', serials[i].join(','));
+		if (!jsonOutput) {
+			console.log('\tToken:', tokens[i].toString(), 'Serial(s):', serials[i].join(','));
+		}
 		for (let j = 0; j < serials[i].length; j++) {
 			hashList.push(ethers.solidityPackedKeccak256(
 				['address', 'uint256'],
@@ -47,9 +75,8 @@ const main = async () => {
 		}
 	}
 
-	// import ABI
+	// Import ABI
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
-
 	const nfbtsIface = new ethers.Interface(json.abi);
 
 	const encodedCommand = nfbtsIface.encodeFunctionData('getSerials', [hashList]);
@@ -64,25 +91,38 @@ const main = async () => {
 
 	const decodedResult = nfbtsIface.decodeFunctionResult('getSerials', result);
 
-	// output the mapping of token#Serial -> serial
-	console.log('\n-Result:');
+	// Output the mapping of token#Serial -> serial
 	let counter = 0;
+	const results = [];
 
 	for (let i = 0; i < tokens.length; i++) {
 		for (let j = 0; j < serials[i].length; j++) {
-			console.log(`\t${tokens[i].toString()}#${serials[i][j]} -> ${Number(decodedResult[0][counter])}`);
+			const mapping = {
+				token: tokens[i].toString(),
+				inputSerial: Number(serials[i][j]),
+				outputSerial: Number(decodedResult[0][counter]),
+			};
+			results.push(mapping);
 			counter++;
+		}
+	}
+
+	if (jsonOutput) {
+		console.log(JSON.stringify({
+			contract: contractId.toString(),
+			mappings: results,
+		}, null, 2));
+	} else {
+		console.log('\n-Result:');
+		for (const r of results) {
+			console.log(`\t${r.token}#${r.inputSerial} -> ${r.outputSerial}`);
 		}
 	}
 };
 
-
 main()
-	.then(() => {
-		// eslint-disable-next-line no-useless-escape
-		process.exit(0);
-	})
+	.then(() => process.exit(0))
 	.catch(error => {
-		console.error(error);
+		console.error('ERROR:', error.message || error);
 		process.exit(1);
 	});

@@ -25,7 +25,7 @@ const main = async () => {
 	}
 
 
-	console.log('\n-Using ENIVRONMENT:', env);
+	console.log('\n-Using ENVIRONMENT:', env);
 	console.log('\n-Using Operator:', operatorId.toString());
 
 	if (env.toUpperCase() == 'TEST') {
@@ -38,7 +38,7 @@ const main = async () => {
 	}
 	else {
 		console.log('ERROR: Must specify either MAIN or TEST as environment in .env file');
-		return;
+		process.exit(1);
 	}
 
 	client.setOperator(operatorId, operatorKey);

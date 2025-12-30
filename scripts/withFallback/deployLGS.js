@@ -1,7 +1,4 @@
 const {
-	Client,
-	AccountId,
-	PrivateKey,
 	ContractId,
 	TokenId,
 	ContractFunctionParameters,
@@ -9,87 +6,51 @@ const {
 const fs = require('fs');
 const readlineSync = require('readline-sync');
 const { contractDeployFunction } = require('../../utils/solidityHelpers');
-// const { hethers } = require('@hashgraph/hethers');
-require('dotenv').config();
-
-// Get operator from .env file
-let operatorKey;
-let operatorId;
-try {
-	operatorKey = PrivateKey.fromStringED25519(process.env.PRIVATE_KEY);
-	operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-}
-catch (err) {
-	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
-}
+const { initializeClient } = require('../../utils/clientFactory');
+const { getArgFlag } = require('../../utils/nodeHelpers');
 
 const lazyGasStationName = 'LazyGasStation';
 
-const env = process.env.ENVIRONMENT ?? null;
+function showHelp() {
+	console.log(`
+Usage: node deployLGS.js
 
-let lazyTokenId;
-let client;
-let lazySCT;
-let lazyGasStationId;
+Deploy a new LazyGasStation contract.
+
+Required Environment Variables:
+  LAZY_SCT_CONTRACT_ID    LAZY SCT (Staking) contract ID
+  LAZY_TOKEN_ID           $LAZY token ID
+
+Note: Will abort if LAZY_GAS_STATION_CONTRACT_ID is already set.
+
+Options:
+  -h, --help    Show this help message
+
+Example:
+  # Set environment variables in .env, then run:
+  node deployLGS.js
+`);
+}
 
 const main = async () => {
-	// configure the client object
-	if (
-		operatorKey === undefined ||
-		operatorKey == null ||
-		operatorId === undefined ||
-		operatorId == null
-	) {
-		console.log(
-			'Environment required, please specify PRIVATE_KEY & ACCOUNT_ID in the .env file',
-		);
+	if (getArgFlag('h') || getArgFlag('help')) {
+		showHelp();
+		process.exit(0);
+	}
+
+	// Initialize client using clientFactory
+	const { client, operatorId, env } = initializeClient();
+
+	if (!process.env.LAZY_SCT_CONTRACT_ID || !process.env.LAZY_TOKEN_ID) {
+		console.error('ERROR: Must specify LAZY_SCT_CONTRACT_ID and LAZY_TOKEN_ID in .env');
 		process.exit(1);
 	}
 
-	console.log('\n-Using ENIVRONMENT:', env);
+	const lazySCT = ContractId.fromString(process.env.LAZY_SCT_CONTRACT_ID);
+	const lazyTokenId = TokenId.fromString(process.env.LAZY_TOKEN_ID);
 
-	if (env.toUpperCase() == 'TEST') {
-		client = Client.forTestnet();
-		console.log('testing in *TESTNET*');
-	}
-	else if (env.toUpperCase() == 'MAIN') {
-		client = Client.forMainnet();
-		console.log('testing in *MAINNET*');
-	}
-	else if (env.toUpperCase() == 'PREVIEW') {
-		client = Client.forPreviewnet();
-		console.log('testing in *PREVIEWNET*');
-	}
-	else if (env.toUpperCase() == 'LOCAL') {
-		const node = { '127.0.0.1:50211': new AccountId(3) };
-		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
-		console.log('testing in *LOCAL*');
-	}
-	else {
-		console.log(
-			'ERROR: Must specify either MAIN or TEST or LOCAL as environment in .env file',
-		);
-		return;
-	}
-
-	client.setOperator(operatorId, operatorKey);
-	// deploy the contract
-	console.log('\n-Using Operator:', operatorId.toString());
-
-	if (process.env.LAZY_SCT_CONTRACT_ID && process.env.LAZY_TOKEN_ID) {
-		console.log(
-			'\n-Using existing LAZY SCT:',
-			process.env.LAZY_SCT_CONTRACT_ID,
-		);
-		lazySCT = ContractId.fromString(process.env.LAZY_SCT_CONTRACT_ID);
-
-		lazyTokenId = TokenId.fromString(process.env.LAZY_TOKEN_ID);
-		console.log('\n-Using existing LAZY Token ID:', lazyTokenId.toString());
-	}
-	else {
-		console.log('Aborting, no LAZY SCT found -> check LAZY_SCT_CONTRACT_ID and LAZY_TOKEN_ID');
-		return;
-	}
+	console.log('\n-Using existing LAZY SCT:', lazySCT.toString());
+	console.log('-Using existing LAZY Token ID:', lazyTokenId.toString());
 
 	const lazyGasStationJSON = JSON.parse(
 		fs.readFileSync(
@@ -98,55 +59,41 @@ const main = async () => {
 	);
 
 	if (process.env.LAZY_GAS_STATION_CONTRACT_ID) {
-		console.log(
-			'\n-Found existing Lazy Gas Station:',
-			process.env.LAZY_GAS_STATION_CONTRACT_ID,
-		);
-		lazyGasStationId = ContractId.fromString(
-			process.env.LAZY_GAS_STATION_CONTRACT_ID,
-		);
+		console.log('\n-Found existing Lazy Gas Station:', process.env.LAZY_GAS_STATION_CONTRACT_ID);
 		console.log('Aborting...');
-		return;
+		process.exit(0);
 	}
-	else {
-		console.log('LAZY_GAS_STATION_CONTRACT_ID ->', process.env.LAZY_GAS_STATION_CONTRACT_ID);
-		const proceed = readlineSync.keyInYNStrict('No Lazy Gas Station found, do you want to deploy it?');
 
-		if (!proceed) {
-			console.log('Aborting');
-			return;
-		}
+	console.log('LAZY_GAS_STATION_CONTRACT_ID ->', process.env.LAZY_GAS_STATION_CONTRACT_ID);
+	const proceed = readlineSync.keyInYNStrict('No Lazy Gas Station found, do you want to deploy it?');
 
-		const gasLimit = 1_500_000;
-		console.log(
-			'\n- Deploying contract...',
-			lazyGasStationName,
-			'\n\tgas@',
-			gasLimit,
-		);
-
-		const lazyGasStationBytecode = lazyGasStationJSON.bytecode;
-
-		const lazyGasStationParams = new ContractFunctionParameters()
-			.addAddress(lazyTokenId.toSolidityAddress())
-			.addAddress(lazySCT.toSolidityAddress());
-
-		[lazyGasStationId] = await contractDeployFunction(
-			client,
-			lazyGasStationBytecode,
-			gasLimit,
-			lazyGasStationParams,
-		);
-
-		console.log(
-			`Lazy Gas Station contract created with ID: ${lazyGasStationId} / ${lazyGasStationId.toSolidityAddress()}`,
-		);
+	if (!proceed) {
+		console.log('Aborting');
+		process.exit(0);
 	}
+
+	const gasLimit = 1_500_000;
+	console.log('\n- Deploying contract...', lazyGasStationName, '\n\tgas@', gasLimit);
+
+	const lazyGasStationBytecode = lazyGasStationJSON.bytecode;
+
+	const lazyGasStationParams = new ContractFunctionParameters()
+		.addAddress(lazyTokenId.toSolidityAddress())
+		.addAddress(lazySCT.toSolidityAddress());
+
+	const [lazyGasStationId] = await contractDeployFunction(
+		client,
+		lazyGasStationBytecode,
+		gasLimit,
+		lazyGasStationParams,
+	);
+
+	console.log(`Lazy Gas Station contract created with ID: ${lazyGasStationId} / ${lazyGasStationId.toSolidityAddress()}`);
 };
 
 main()
 	.then(() => process.exit(0))
 	.catch(error => {
-		console.error(error);
+		console.error('ERROR:', error.message || error);
 		process.exit(1);
 	});

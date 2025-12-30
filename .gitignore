@@ -11,3 +11,8 @@ artifacts
 
 package-lock.json
 yarn.lock
+# Data files
+old*.csv
+
+# Claude Code frameworks (exclude all)
+.claude/

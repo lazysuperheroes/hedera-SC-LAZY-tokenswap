@@ -165,10 +165,10 @@ contract LAZYTokenCreator is KeyHelper, ExpiryHelper, Ownable {
         }
     }
 
-    // Transfer hbar oput of the contract - using secure ether transfer pattern
+    // Transfer hbar out of the contract - using secure ether transfer pattern
     // on top of onlyOwner as max gas of 2300 (not adjustable) will limit re-entrrant attacks
-    // also throws error on failure causing contract to auutomatically revert
-    /// @param receiverAddress address in EVM fomat of the reciever of the token
+    // also throws error on failure causing contract to automatically revert
+    /// @param receiverAddress address in EVM format of the receiver of the token
     /// @param amount number of tokens to send (in long form adjusted for decimal)
     function transferHbar(address payable receiverAddress, uint amount)
         external

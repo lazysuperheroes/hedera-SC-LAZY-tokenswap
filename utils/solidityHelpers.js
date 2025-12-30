@@ -3,6 +3,7 @@ const axios = require('axios');
 const dotenv = require('dotenv');
 const { ContractCallQuery, Client, TransactionRecordQuery, ContractExecuteTransaction, ContractCreateFlow } = require('@hashgraph/sdk');
 const { getBaseURL } = require('./hederaMirrorHelpers');
+const { formatTransactionAnalysis } = require('./transactionHelpers');
 dotenv.config();
 
 const SLEEP_TIME = process.env.SLEEP_TIME ?? 5000;
@@ -28,12 +29,16 @@ async function useSetter(contractId, iface, client, fcnName, gasLim, ...values) 
 }
 
 /**
- * Generalised parseing function to error handle
- * @param {ethers.Interface} iface the interface boostrapped by the function ABI
+ * Generalised parsing function to error handle
+ * @param {ethers.Interface | ethers.Interface[]} ifaceOrArray single interface or array of interfaces to try
  * @param {*} errorData bytes of the error
  * @returns {String} the error message
  */
-function parseError(iface, errorData) {
+function parseError(ifaceOrArray, errorData) {
+	// Safety check for undefined/null errorData
+	if (!errorData) {
+		return 'UNKNOWN ERROR: No error data provided';
+	}
 
 	if (errorData.startsWith('0x08c379a0')) {
 		// decode Error(string)
@@ -87,33 +92,83 @@ function parseError(iface, errorData) {
 		return `Panic code: ${code[0]} : ${type}`;
 	}
 
-	try {
-		const errDescription = iface.parseError(errorData);
-		return errDescription;
+	// Try to parse custom errors
+	const interfaces = Array.isArray(ifaceOrArray) ? ifaceOrArray : [ifaceOrArray];
+
+	for (const iface of interfaces) {
+		try {
+			const errDescription = iface.parseError(errorData);
+			if (errDescription) {
+				// Format the error nicely with contract name if available
+				const errorName = errDescription.name;
+				const errorArgs = errDescription.args;
+
+				let formattedMessage;
+				if (errorArgs && errorArgs.length > 0) {
+					const formattedArgs = errorArgs.map((arg, idx) => {
+						const argName = errDescription.fragment.inputs[idx]?.name || `arg${idx}`;
+						return `${argName}: ${arg.toString()}`;
+					}).join(', ');
+					formattedMessage = `❌ ${errorName}(${formattedArgs})`;
+				}
+				else {
+					formattedMessage = `❌ ${errorName}()`;
+				}
+
+				// Return object with name (for tests) and message (for display)
+				return {
+					name: errorName,
+					message: formattedMessage,
+					args: errorArgs,
+					toString: () => formattedMessage,
+				};
+			}
+		}
+		catch {
+			// Try next interface
+			continue;
+		}
 	}
-	catch (e) {
-		console.error(errorData, e);
-		return `UNKNOWN ERROR: ${errorData}`;
-	}
+
+	// If no interface could parse it, return unknown error
+	console.error('Could not decode error with any provided interface:', errorData);
+	return `UNKNOWN ERROR: ${errorData}`;
 }
 
 /**
- * Generalised parseing function to error handle
+ * Generalised parsing function to error handle
  * If a client is passed in, it will use the network to get the record (paid for by the client).
  * If a environment (string) is passed in, it will use the mirror node to get the record (free but lower).
  * @param {String | Client} envOrClient Environment being used to inform the mirror node call
  * @param {TransactionId} transactionId Hedera Tx Id
- * @param {ethers.Interface} iface the interface boostrapped by the function ABI
+ * @param {ethers.Interface | ethers.Interface[]} ifaceOrArray single interface or array of interfaces to try
  */
-async function parseErrorTransactionId(envOrClient, transactionId, iface) {
+async function parseErrorTransactionId(envOrClient, transactionId, ifaceOrArray) {
 	if (envOrClient instanceof Client) {
 		const record = await new TransactionRecordQuery()
 			.setTransactionId(transactionId)
 			.setValidateReceiptStatus(false)
 			.execute(envOrClient);
+		console.log(' -Got record from network for transaction:', transactionId.toString());
+		console.log(' -Status:', record.receipt.status.toString());
+
+		const errorHex = record.contractFunctionResult.errorMessage;
+		const decodedError = parseError(ifaceOrArray, errorHex);
+
+		// Show both hex and decoded message
+		if (decodedError && typeof decodedError === 'object' && decodedError.message) {
+			console.log(' -Error message:', errorHex, '->', decodedError.message, 'calling:', record.contractFunctionResult.contractId.toString(), 'with gas used:', record.contractFunctionResult.gasUsed.toString());
+		}
+		else {
+			console.log(' -Error message:', errorHex, 'calling:', record.contractFunctionResult.contractId.toString(), 'with gas used:', record.contractFunctionResult.gasUsed.toString());
+		}
 
 		try {
-			return parseError(iface, record.contractFunctionResult.errorMessage);
+			if (!errorHex || errorHex == '0x') {
+				console.log('NO CONTRACT ERROR MESSAGE:', transactionId.toString(), formatTransactionAnalysis(record));
+				return `POORLY FORMED ERROR: ${transactionId}`;
+			}
+			return decodedError;
 		}
 		catch (e) {
 			console.error(e);
@@ -136,8 +191,8 @@ async function parseErrorTransactionId(envOrClient, transactionId, iface) {
 		console.log(' -ERROR', response.status, ' from mirror node');
 	}
 	else {
-		// console.log(' -Got', response.data.error_message, 'from mirror node');
-		return parseError(iface, response.data.error_message);
+		console.log(' -Got', response.data.error_message, 'from mirror node');
+		return parseError(ifaceOrArray, response.data.error_message);
 	}
 }
 
@@ -148,20 +203,21 @@ async function parseErrorTransactionId(envOrClient, transactionId, iface) {
  * @param {AccountId} from
  * @param {Boolean} estimate gas estimate
  * @param {Number} gas gas limit
+ * @param {Number} value amount of hbar to send in tinybars
  * @returns {String} encoded result
  */
-async function readOnlyEVMFromMirrorNode(env, contractId, data, from, estimate = true, gas = 300_000) {
+async function readOnlyEVMFromMirrorNode(env, contractId, data, from, estimate = true, gas = 300_000, value = 0) {
 	const baseUrl = getBaseURL(env);
 
 	const body = {
 		'block': 'latest',
 		'data': data,
 		'estimate': estimate,
-		'from': from.toSolidityAddress(),
+		'from': typeof from === 'string' ? from : from.toSolidityAddress(),
 		'gas': gas,
 		'gasPrice': 100000000,
 		'to': contractId.toSolidityAddress(),
-		'value': 0,
+		'value': value,
 	};
 
 	const url = `${baseUrl}/api/v1/contracts/call`;
@@ -245,6 +301,9 @@ async function contractExecuteFunction(contractId, iface, client, gasLim, fcnNam
 		gasLim = 200_000;
 	}
 
+	// Use global error interfaces array if available, otherwise fall back to single interface
+	const errorDecoder = global.errorInterfaces || iface;
+
 	const encodedCommand = iface.encodeFunctionData(fcnName, params);
 	// convert to UINT8ARRAY after stripping the '0x'
 	let contractExecuteTx;
@@ -259,7 +318,12 @@ async function contractExecuteFunction(contractId, iface, client, gasLim, fcnNam
 	catch (err) {
 		if (flagError) console.log('ERROR: Contract Transaction Failed');
 
-		return [(parseError(iface, err.contractFunctionResult.errorMessage))];
+		if (!err?.contractFunctionResult?.errorMessage) {
+			console.log('TX FAILED - NO CONTRACT ERROR MESSAGE:', contractExecuteTx?.transactionId?.toString(), contractExecuteTx, err);
+			return [{ status: err }, `${contractExecuteTx?.transactionId?.toString()} : ${contractId.toString()} : ${fcnName} : ${params}`, null];
+		}
+
+		return [(parseError(errorDecoder, err?.contractFunctionResult?.errorMessage))];
 	}
 
 	let contractExecuteRx;
@@ -268,7 +332,7 @@ async function contractExecuteFunction(contractId, iface, client, gasLim, fcnNam
 	}
 	catch (e) {
 		try {
-			const error = await parseErrorTransactionId(client, e.transactionId, iface);
+			const error = await parseErrorTransactionId(client, e.transactionId, errorDecoder);
 			if (flagError) {
 				console.log('ERROR: Fetching Contract Receipt Failed');
 				console.log('ERROR:', typeof error, error);
@@ -311,7 +375,7 @@ async function contractExecuteFunction(contractId, iface, client, gasLim, fcnNam
 function linkBytecode(bytecode, libNameArray, libAddressArray) {
 	for (let i = 0; i < libNameArray.length; i++) {
 		const libName = libNameArray[i];
-		const libAddress = libAddressArray[i].toSolidityAddress();
+		const libAddress = typeof libAddressArray[i] == 'object' ? libAddressArray[i].toSolidityAddress() : libAddressArray[i];
 
 		const nameToHash = `contracts/${libName}.sol:${libName}`;
 

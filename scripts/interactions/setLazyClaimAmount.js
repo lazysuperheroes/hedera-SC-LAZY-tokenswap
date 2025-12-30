@@ -1,85 +1,53 @@
 const {
-	Client,
-	AccountId,
-	PrivateKey,
 	ContractId,
 } = require('@hashgraph/sdk');
-require('dotenv').config();
 const fs = require('fs');
 const { ethers } = require('ethers');
 const readlineSync = require('readline-sync');
 const { getArgFlag } = require('../../utils/nodeHelpers');
 const { contractExecuteFunction, readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers');
-
-// Get operator from .env file
-let operatorKey;
-let operatorId;
-try {
-	operatorKey = PrivateKey.fromStringED25519(process.env.PRIVATE_KEY);
-	operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-}
-catch (err) {
-	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
-}
+const { initializeClient } = require('../../utils/clientFactory');
 
 const contractName = 'NoFallbackTokenSwap';
 
-const env = process.env.ENVIRONMENT ?? null;
-let client;
+function showHelp() {
+	console.log(`
+Usage: node setLazyClaimAmount.js <contract-id> <amount>
 
-// check-out the deployed script - test read-only method
+Update the $LAZY claim amount on a NoFallbackTokenSwap contract.
+
+Arguments:
+  <contract-id>    Contract ID to update (e.g., 0.0.123456)
+  <amount>         New $LAZY amount per claim (include decimal, e.g., 10 for 1 $LAZY)
+
+Options:
+  -h, --help    Show this help message
+
+Example:
+  node setLazyClaimAmount.js 0.0.123456 10
+
+  Sets the claim amount to 10 (which is 1 $LAZY with 1 decimal)
+`);
+}
+
 const main = async () => {
-	if (contractName === undefined || contractName == null) {
-		console.log('Environment required, please specify CONTRACT_NAME for ABI in the .env file');
-		return;
+	const args = process.argv.slice(2).filter(arg => !arg.startsWith('-'));
+
+	if (args.length != 2 || getArgFlag('h') || getArgFlag('help')) {
+		showHelp();
+		process.exit(args.length === 2 ? 0 : 1);
 	}
 
-	const args = process.argv.slice(2);
-	if (args.length != 2 || getArgFlag('h')) {
-		console.log('Usage: setLazyClaimAmount.js 0.0.CCC X');
-		console.log('		CCC is the contractId to update the claim amount');
-		console.log('		The amount of $LAZY per claim (add the decimal)');
-		return;
-	}
+	// Initialize client using clientFactory
+	const { client, operatorId, env } = initializeClient();
 
 	const contractId = ContractId.fromString(args[0]);
 	const newAmount = Number(args[1]);
 
-	console.log('\n-Using ENIVRONMENT:', env);
-	console.log('\n-Using Operator:', operatorId.toString());
 	console.log('\n-Using Contract:', contractId.toString());
 
-
-	if (env.toUpperCase() == 'TEST') {
-		client = Client.forTestnet();
-		console.log('testing in *TESTNET*');
-	}
-	else if (env.toUpperCase() == 'MAIN') {
-		client = Client.forMainnet();
-		console.log('testing in *MAINNET*');
-	}
-	else if (env.toUpperCase() == 'PREVIEW') {
-		client = Client.forPreviewnet();
-		console.log('testing in *PREVIEWNET*');
-	}
-	else if (env.toUpperCase() == 'LOCAL') {
-		const node = { '127.0.0.1:50211': new AccountId(3) };
-		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
-		console.log('testing in *LOCAL*');
-	}
-	else {
-		console.log(
-			'ERROR: Must specify either MAIN or TEST or LOCAL as environment in .env file',
-		);
-		return;
-	}
-
-	client.setOperator(operatorId, operatorKey);
-
-
-	// import ABI
+	// Import ABI
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
-
 	const nfbtsIface = new ethers.Interface(json.abi);
 
 	const encodedCommand = nfbtsIface.encodeFunctionData('lazyPmtAmt', []);
@@ -96,17 +64,17 @@ const main = async () => {
 
 	console.log('Current setting:', Number(currentAmount[0]), 'not adjusted for decimal');
 
-	const proceed = readlineSync.keyInYNStrict('Do you want to update the amount of $LAZY given (amount includes deciomal -> 1 $LAZY should be 10 here): ' + newAmount + '?');
+	const proceed = readlineSync.keyInYNStrict('Do you want to update the amount of $LAZY given (amount includes decimal -> 1 $LAZY should be 10 here): ' + newAmount + '?');
 	if (!proceed) {
 		console.log('User Aborted');
-		return;
+		process.exit(0);
 	}
 
 	resObj = await contractExecuteFunction(
 		contractId,
 		nfbtsIface,
 		client,
-		operatorId,
+		null,
 		'updateClaimAmount',
 		[newAmount],
 	);
@@ -115,11 +83,8 @@ const main = async () => {
 };
 
 main()
-	.then(() => {
-		// eslint-disable-next-line no-useless-escape
-		process.exit(0);
-	})
+	.then(() => process.exit(0))
 	.catch(error => {
-		console.error(error);
+		console.error('ERROR:', error.message || error);
 		process.exit(1);
 	});

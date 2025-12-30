@@ -1,78 +1,58 @@
 const {
-	Client,
 	AccountId,
-	PrivateKey,
 	ContractFunctionParameters,
 	TokenId,
 } = require('@hashgraph/sdk');
 const fs = require('fs');
 const readlineSync = require('readline-sync');
 const { contractDeployFunction } = require('../../utils/solidityHelpers');
+const { initializeClient } = require('../../utils/clientFactory');
+const { getArgFlag } = require('../../utils/nodeHelpers');
 
-require('dotenv').config();
-
-// Get operator from .env file
-let operatorKey;
-let operatorId;
-try {
-	operatorKey = PrivateKey.fromStringED25519(process.env.PRIVATE_KEY);
-	operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-}
-catch (err) {
-	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
-}
 const contractName = 'NoFallbackTokenSwap';
-const env = process.env.ENVIRONMENT ?? null;
 
-const newToken = TokenId.fromString(process.env.SWAP_TOKEN) ?? null;
-const tokenTreasury = AccountId.fromString(process.env.TOKEN_TREASURY) ?? null;
-const lazyGasStation = AccountId.fromString(process.env.LAZY_GAS_STATION_CONTRACT_ID) ?? null;
-const lazyToken = TokenId.fromString(process.env.LAZY_TOKEN_ID) ?? null;
+function showHelp() {
+	console.log(`
+Usage: node deployNoFallbackTokenSwap.js
 
-let client;
+Deploy a new NoFallbackTokenSwap contract.
+
+Required Environment Variables:
+  SWAP_TOKEN                    Token ID for the new swap token
+  TOKEN_TREASURY                Account ID of the token treasury
+  LAZY_GAS_STATION_CONTRACT_ID  LazyGasStation contract ID
+  LAZY_TOKEN_ID                 $LAZY token ID
+
+Options:
+  -h, --help    Show this help message
+
+Example:
+  # Set environment variables in .env, then run:
+  node deployNoFallbackTokenSwap.js
+`);
+}
 
 const main = async () => {
-	if (contractName === undefined || contractName == null) {
-		console.log('Environment required, please specify CONTRACT_NAME for ABI in the .env file');
-		return;
+	if (getArgFlag('h') || getArgFlag('help')) {
+		showHelp();
+		process.exit(0);
 	}
 
-	console.log('\n-Using ENIVRONMENT:', env);
-	console.log('\n-Using Operator:', operatorId.toString());
+	// Initialize client using clientFactory
+	const { client, operatorId, env } = initializeClient();
+
+	const newToken = TokenId.fromString(process.env.SWAP_TOKEN);
+	const tokenTreasury = AccountId.fromString(process.env.TOKEN_TREASURY);
+	const lazyGasStation = AccountId.fromString(process.env.LAZY_GAS_STATION_CONTRACT_ID);
+	const lazyToken = TokenId.fromString(process.env.LAZY_TOKEN_ID);
+
 	console.log('\n-Deploying Contract:', contractName);
-	console.log('\n-Using LazyGasStation:', lazyGasStation.toString());
-	console.log('\n-Using LazyToken:', lazyToken.toString());
-	console.log('\n-Using New Token:', newToken.toString());
-	console.log('\n-Using Old Token Treasury:', tokenTreasury.toString());
-
-	if (env.toUpperCase() == 'TEST') {
-		client = Client.forTestnet();
-		console.log('testing in *TESTNET*');
-	}
-	else if (env.toUpperCase() == 'MAIN') {
-		client = Client.forMainnet();
-		console.log('testing in *MAINNET*');
-	}
-	else if (env.toUpperCase() == 'PREVIEW') {
-		client = Client.forPreviewnet();
-		console.log('testing in *PREVIEWNET*');
-	}
-	else if (env.toUpperCase() == 'LOCAL') {
-		const node = { '127.0.0.1:50211': new AccountId(3) };
-		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
-		console.log('testing in *LOCAL*');
-	}
-	else {
-		console.log(
-			'ERROR: Must specify either MAIN or TEST or LOCAL as environment in .env file',
-		);
-		return;
-	}
-
-	client.setOperator(operatorId, operatorKey);
+	console.log('-Using LazyGasStation:', lazyGasStation.toString());
+	console.log('-Using LazyToken:', lazyToken.toString());
+	console.log('-Using New Token:', newToken.toString());
+	console.log('-Using Old Token Treasury:', tokenTreasury.toString());
 
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`));
-
 	const contractBytecode = json.bytecode;
 
 	const execute = readlineSync.keyInYNStrict('Do wish to deploy?');
@@ -93,12 +73,11 @@ const main = async () => {
 	else {
 		console.log('Aborting deployment');
 	}
-
 };
 
 main()
 	.then(() => process.exit(0))
 	.catch(error => {
-		console.error(error);
+		console.error('ERROR:', error.message || error);
 		process.exit(1);
 	});

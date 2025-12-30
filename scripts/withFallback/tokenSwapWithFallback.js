@@ -1,11 +1,7 @@
 const {
-	Client,
-	AccountId,
-	PrivateKey,
 	ContractId,
 	TokenId,
 } = require('@hashgraph/sdk');
-require('dotenv').config();
 const fs = require('fs');
 const { ethers } = require('ethers');
 const { getArgFlag } = require('../../utils/nodeHelpers');
@@ -13,52 +9,55 @@ const { contractExecuteFunction } = require('../../utils/solidityHelpers');
 const readlineSync = require('readline-sync');
 const { setFTAllowance, setNFTAllowanceAll, associateTokenToAccount } = require('../../utils/hederaHelpers');
 const { checkMirrorBalance, checkMirrorAllowance } = require('../../utils/hederaMirrorHelpers');
-
-// Get operator from .env file
-let operatorKey;
-let operatorId;
-try {
-	operatorKey = PrivateKey.fromStringED25519(process.env.PRIVATE_KEY);
-	operatorId = AccountId.fromString(process.env.ACCOUNT_ID);
-}
-catch (err) {
-	console.log('ERROR: Must specify PRIVATE_KEY & ACCOUNT_ID in the .env file');
-}
+const { estimateGas, logTransactionResult } = require('../../utils/gasHelpers');
+const { initializeClient } = require('../../utils/clientFactory');
 
 const contractName = 'FallbackTokenSwap';
-const env = process.env.ENVIRONMENT ?? null;
-const lazyTokenId = TokenId.fromString(process.env.LAZY_TOKEN_ID);
-let client;
 
-// check-out the deployed script - test read-only method
+function showHelp() {
+	console.log(`
+Usage: node tokenSwapWithFallback.js <contract-id> <tokens> <serials>
+
+Execute a token swap on a FallbackTokenSwap contract.
+
+Arguments:
+  <contract-id>   Contract ID (e.g., 0.0.123456)
+  <tokens>        Comma-separated token IDs to swap (e.g., 0.0.XXX,0.0.YYY)
+  <serials>       Colon-delimited serial groups matching tokens (e.g., 1,2:3,4)
+
+Options:
+  -h, --help      Show this help message
+
+Example:
+  node tokenSwapWithFallback.js 0.0.123 0.0.456,0.0.789 1,2:3,4
+
+  This swaps serials 1,2 from token 0.0.456 and serials 3,4 from token 0.0.789
+`);
+}
+
 const main = async () => {
-	const args = process.argv.slice(2);
-	if (args.length != 3 || getArgFlag('h')) {
-		console.log('Usage: tokenSwap.js 0.0.CCC 0.0.XXX,0.0.YYY X1,X2,X3:Y1,Y2,Y3');
-		console.log('		CCC is the contractId to update the claim amount');
-		console.log('		0.0.XXX,0.0.YYY are the tokens to swap in same order as the serials');
-		console.log('		X,Y,Z are the serials to swap in same order as the tokenIds delimited by :');
-		console.log('example: tokenSwap.js 0.0.123 0.0.456,0.0.789 1,2:3,4');
-		return;
+	const args = process.argv.slice(2).filter(arg => !arg.startsWith('-'));
+	if (args.length !== 3 || getArgFlag('h') || getArgFlag('help')) {
+		showHelp();
+		process.exit(args.length === 3 ? 0 : 1);
 	}
 
+	// Initialize client using clientFactory
+	const { client, operatorId, operatorKey, env } = initializeClient();
+
+	const lazyTokenId = TokenId.fromString(process.env.LAZY_TOKEN_ID);
 	const contractId = ContractId.fromString(args[0]);
 	const tokens = args[1].split(',').map((t) => TokenId.fromString(t));
-	// create token array as Solidity addresses
 	const tokenAddresses = tokens.map((t) => t.toSolidityAddress());
-	// create and array of arrays
 	const serials = args[2].split(':').map((s) => (s.split(',')));
 
-	if (tokens.length != serials.length) {
-		console.log('ERROR: Must have same number of tokens as serials');
-		return;
+	if (tokens.length !== serials.length) {
+		console.error('ERROR: Must have same number of tokens as serials');
+		process.exit(1);
 	}
 
-	console.log('\n-Using ENIVRONMENT:', env);
-	console.log('\n-Using Operator:', operatorId.toString());
 	console.log('\n-Using Contract:', contractId.toString());
-	console.log('\n-Preparing to swap tokens...');
-
+	console.log('-Preparing to swap tokens...');
 
 	const tokenArg = [];
 	const serialArg = [];
@@ -71,36 +70,10 @@ const main = async () => {
 		}
 	}
 
-	if (env.toUpperCase() == 'TEST') {
-		client = Client.forTestnet();
-		console.log('testing in *TESTNET*');
-	}
-	else if (env.toUpperCase() == 'MAIN') {
-		client = Client.forMainnet();
-		console.log('testing in *MAINNET*');
-	}
-	else if (env.toUpperCase() == 'PREVIEW') {
-		client = Client.forPreviewnet();
-		console.log('testing in *PREVIEWNET*');
-	}
-	else if (env.toUpperCase() == 'LOCAL') {
-		const node = { '127.0.0.1:50211': new AccountId(3) };
-		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
-		console.log('testing in *LOCAL*');
-	}
-	else {
-		console.log(
-			'ERROR: Must specify either MAIN or TEST or LOCAL as environment in .env file',
-		);
-		return;
-	}
-
-	client.setOperator(operatorId, operatorKey);
-
 	let proceed = readlineSync.keyInYNStrict('Do you want to set (ALL) allowances needed for the swap?');
 	if (!proceed) {
 		console.log('User Aborted');
-		return;
+		process.exit(0);
 	}
 
 	const allowanceStatus = await setNFTAllowanceAll(client, tokens, operatorId, contractId);
@@ -108,8 +81,8 @@ const main = async () => {
 
 	// check the user has Lazy Associated
 	const lazyBalance = await checkMirrorBalance(env, operatorId, lazyTokenId);
-	if (lazyBalance == 0) {
-		console.log('ERROR: Operator may not have $LAZY associated');
+	if (lazyBalance === 0) {
+		console.log('WARNING: Operator may not have $LAZY associated');
 
 		proceed = readlineSync.keyInYNStrict('Do you want to associate $LAZY?');
 		if (proceed) {
@@ -125,8 +98,6 @@ const main = async () => {
 
 	// user will get some $LAZY when they swap the tokens as part of the initial NFT movement
 	// will need to set a $LAZY allowance for the contract to spend on behalf of the operator for the return leg
-
-
 	const requiredAllowance = Math.ceil(totalSerials / 8);
 
 	// check if they already have an allowance set
@@ -153,35 +124,47 @@ const main = async () => {
 		console.log('Operator has sufficient $LAZY allowance');
 	}
 
-
 	proceed = readlineSync.keyInYNStrict('Do you want to swap the tokens?');
 	if (!proceed) {
 		console.log('User Aborted');
-		return;
+		process.exit(0);
 	}
 
 	const json = JSON.parse(fs.readFileSync(`./artifacts/contracts/${contractName}.sol/${contractName}.json`, 'utf8'));
-	const nfbtsIface = new ethers.Interface(json.abi);
+	const iface = new ethers.Interface(json.abi);
+
+	console.log('\n-Executing swap...');
+
+	// Use gas estimation
+	const fallbackGas = 350_000 + 100_000 * tokens.length;
+	const gasInfo = await estimateGas(
+		env,
+		contractId,
+		iface,
+		operatorId,
+		'swapNFTs',
+		[tokenAddresses, serialArg],
+		fallbackGas,
+	);
 
 	const result = await contractExecuteFunction(
 		contractId,
-		nfbtsIface,
+		iface,
 		client,
-		350_000 + 100_000 * tokens.length,
+		gasInfo.gasLimit,
 		'swapNFTs',
 		[tokenAddresses, serialArg],
 	);
 
+	logTransactionResult(result, 'Token Swap', gasInfo);
 	console.log('$LAZY Received:', result[1]?.toString());
-	console.log('Tokens swapped:', result[0]?.status?.toString(), 'txId:', result[2]?.transactionId?.toString());
 };
 
 main()
 	.then(() => {
-		// eslint-disable-next-line no-useless-escape
 		process.exit(0);
 	})
 	.catch(error => {
-		console.error(error);
+		console.error('ERROR:', error.message || error);
 		process.exit(1);
 	});
