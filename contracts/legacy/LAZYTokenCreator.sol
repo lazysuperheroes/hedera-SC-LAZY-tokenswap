@@ -25,6 +25,7 @@ contract LAZYTokenCreator is KeyHelper, ExpiryHelper, Ownable {
     // List of trusted addresses which can mint tokens
     AddrArrayLib.Addresses private _allowanceWL;
 
+    constructor() Ownable(msg.sender) {}
 
     event TokenControllerMessage(
         string msgType,

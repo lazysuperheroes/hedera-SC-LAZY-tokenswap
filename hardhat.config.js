@@ -1,10 +1,16 @@
-require('@nomicfoundation/hardhat-toolbox');
-require('hardhat-contract-sizer');
+import hardhatToolbox from '@nomicfoundation/hardhat-toolbox-mocha-ethers';
+import hardhatContractSizer from '@solidstate/hardhat-contract-sizer';
 
-/** @type import('hardhat/config').HardhatUserConfig */
-module.exports = {
+/** @type {import('hardhat/config').HardhatUserConfig} */
+const config = {
+	plugins: [hardhatToolbox, hardhatContractSizer],
+	contractSizer: {
+		alphaSort: true,
+		runOnCompile: false,
+		disambiguatePaths: false,
+	},
 	solidity: {
-		version: '0.8.18',
+		version: '0.8.24',
 		settings: {
 			optimizer: {
 				enabled: true,
@@ -12,14 +18,18 @@ module.exports = {
 			},
 		},
 	},
-	contractSizer: {
-		alphaSort: true,
-		runOnCompile: true,
-		disambiguatePaths: false,
-		strict: true,
+	paths: {
+		sources: './contracts',
+		tests: './test',
+		cache: './cache',
+		artifacts: './artifacts',
 	},
-	mocha: {
-		timeout: 100000000,
-		slow: 100000,
+	test: {
+		mocha: {
+			timeout: 100000000,
+			slow: 100000,
+		},
 	},
 };
+
+export default config;

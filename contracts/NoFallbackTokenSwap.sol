@@ -120,7 +120,7 @@ contract NoFallbackTokenSwap is HederaTokenService, Ownable {
         address _swapTokenTreasury,
         address _lgs,
         address _lazy
-    ) {
+    ) Ownable(msg.sender) {
         swapToken = _swapToken;
         swapTokenTreasury = _swapTokenTreasury;
         lazyToken = _lazy;
