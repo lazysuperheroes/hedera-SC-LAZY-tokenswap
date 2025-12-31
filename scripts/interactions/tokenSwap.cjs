@@ -27,6 +27,7 @@ Arguments:
 
 Options:
   -h, --help      Show this help message
+  --yes           Skip confirmation prompts (for automation/CI)
 
 Example:
   node tokenSwap.js 0.0.123 0.0.456,0.0.789 1,2:3,4
@@ -66,6 +67,9 @@ const main = async () => {
 		process.exit(1);
 	}
 
+	// Check for --yes flag to skip prompts
+	const skipPrompts = getArgFlag('yes');
+
 	console.log('\n-Using Contract:', contractId.toString());
 	console.log('-Preparing to swap tokens...');
 
@@ -80,7 +84,7 @@ const main = async () => {
 		}
 	}
 
-	let proceed = readlineSync.keyInYNStrict('Do you want to set allowances needed for the swap?');
+	let proceed = skipPrompts || readlineSync.keyInYNStrict('Do you want to set allowances needed for the swap?');
 	if (!proceed) {
 		console.log('User Aborted');
 		process.exit(0);
@@ -94,7 +98,7 @@ const main = async () => {
 	if (lazyBalance === 0) {
 		console.log('WARNING: Operator may not have $LAZY associated');
 
-		proceed = readlineSync.keyInYNStrict('Do you want to associate $LAZY?');
+		proceed = skipPrompts || readlineSync.keyInYNStrict('Do you want to associate $LAZY?');
 		if (proceed) {
 			const status = await associateTokenToAccount(
 				client,
@@ -106,7 +110,7 @@ const main = async () => {
 		}
 	}
 
-	proceed = readlineSync.keyInYNStrict('Do you want to swap the tokens?');
+	proceed = skipPrompts || readlineSync.keyInYNStrict('Do you want to swap the tokens?');
 	if (!proceed) {
 		console.log('User Aborted');
 		process.exit(0);

@@ -19,6 +19,7 @@ Options:
   --graveyard <id>        Token Graveyard contract ID (e.g., 0.0.123456)
                           Optional - set to 0.0.0 or omit if not using graveyard
   --gas <amount>          Gas limit for deployment (default: 5000000)
+  --json                  Output result as JSON (for automation)
 
 Environment Variables:
   ACCOUNT_ID              Hedera operator account
@@ -37,10 +38,13 @@ const main = async () => {
 		process.exit(0);
 	}
 
+	const jsonOutput = getArgFlag('json');
 	const { client, operatorId, env } = initializeClient();
 
-	console.log(`\n-Using ENVIRONMENT: ${env}`);
-	console.log(`-Using Operator: ${operatorId}`);
+	if (!jsonOutput) {
+		console.log(`\n-Using ENVIRONMENT: ${env}`);
+		console.log(`-Using Operator: ${operatorId}`);
+	}
 
 	// Parse arguments
 	const graveyardArg = getArg('graveyard');
@@ -49,13 +53,13 @@ const main = async () => {
 	if (graveyardArg && graveyardArg !== '0.0.0') {
 		const graveyardId = ContractId.fromString(graveyardArg);
 		graveyardAddress = graveyardId.toSolidityAddress();
-		console.log(`-Using Graveyard: ${graveyardArg} (${graveyardAddress})`);
+		if (!jsonOutput) console.log(`-Using Graveyard: ${graveyardArg} (${graveyardAddress})`);
 	} else {
-		console.log('-Graveyard: Not configured (can be set later)');
+		if (!jsonOutput) console.log('-Graveyard: Not configured (can be set later)');
 	}
 
 	const gasLimit = Number(getArg('gas')) || 5_000_000;
-	console.log(`-Gas Limit: ${gasLimit.toLocaleString()}`);
+	if (!jsonOutput) console.log(`-Gas Limit: ${gasLimit.toLocaleString()}`);
 
 	// Load contract bytecode
 	const contractJson = JSON.parse(
@@ -71,7 +75,7 @@ const main = async () => {
 		process.exit(1);
 	}
 
-	console.log(`\n- Deploying contract: ${contractName}`);
+	if (!jsonOutput) console.log(`\n- Deploying contract: ${contractName}`);
 
 	// Deploy contract
 	const contractCreateTx = new ContractCreateFlow()
@@ -86,22 +90,33 @@ const main = async () => {
 	const contractCreateRx = await contractCreateSubmit.getReceipt(client);
 	const contractId = contractCreateRx.contractId;
 
-	console.log('\n=== Deployment Complete ===');
-	console.log(`Contract ID: ${contractId}`);
-	console.log(`EVM Address: ${contractId.toSolidityAddress()}`);
-	console.log(`\nDeployer (${operatorId}) is now the first admin.`);
+	if (jsonOutput) {
+		console.log(JSON.stringify({
+			success: true,
+			contractId: contractId.toString(),
+			evmAddress: contractId.toSolidityAddress(),
+			operator: operatorId.toString(),
+			graveyard: graveyardArg || null,
+			environment: env,
+		}));
+	} else {
+		console.log('\n=== Deployment Complete ===');
+		console.log(`Contract ID: ${contractId}`);
+		console.log(`EVM Address: ${contractId.toSolidityAddress()}`);
+		console.log(`\nDeployer (${operatorId}) is now the first admin.`);
 
-	if (graveyardAddress === '0x0000000000000000000000000000000000000000') {
-		console.log('\nNote: Graveyard not configured. To use graveyard features:');
-		console.log('  1. Deploy or locate a Token Graveyard contract');
-		console.log('  2. Run: node adminManagement.js --contract <id> --set-graveyard <graveyard-id>');
-		console.log('  3. Register this contract as ContractUser on the graveyard');
+		if (graveyardAddress === '0x0000000000000000000000000000000000000000') {
+			console.log('\nNote: Graveyard not configured. To use graveyard features:');
+			console.log('  1. Deploy or locate a Token Graveyard contract');
+			console.log('  2. Run: node adminManagement.js --contract <id> --set-graveyard <graveyard-id>');
+			console.log('  3. Register this contract as ContractUser on the graveyard');
+		}
+
+		console.log('\nNext steps:');
+		console.log('  1. Add output tokens: node setupSwapConfig.js --contract <id> --add-token <token-id>');
+		console.log('  2. Configure swaps: node setupSwapConfig.js --contract <id> --add-swap ...');
+		console.log('  3. Unpause: node adminManagement.js --contract <id> --unpause');
 	}
-
-	console.log('\nNext steps:');
-	console.log('  1. Add output tokens: node setupSwapConfig.js --contract <id> --add-token <token-id>');
-	console.log('  2. Configure swaps: node setupSwapConfig.js --contract <id> --add-swap ...');
-	console.log('  3. Unpause: node adminManagement.js --contract <id> --unpause');
 
 	client.close();
 };

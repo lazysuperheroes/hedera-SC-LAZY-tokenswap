@@ -31,6 +31,7 @@ Actions (choose one):
 Options:
   -h, --help              Show this help message
   --gas <amount>          Gas limit (default: 200000)
+  --json                  Output result as JSON (for automation, works with --info)
 
 Environment Variables:
   ACCOUNT_ID              Hedera operator account (must be admin)
@@ -58,13 +59,16 @@ const main = async () => {
 		process.exit(1);
 	}
 
+	const jsonOutput = getArgFlag('json');
 	const { client, operatorId, env } = initializeClient();
 	const contractId = ContractId.fromString(contractArg);
 	const gasLimit = Number(getArg('gas')) || 200_000;
 
-	console.log(`\n-Using Contract: ${contractId}`);
-	console.log(`-Using Operator: ${operatorId}`);
-	console.log(`-Environment: ${env}`);
+	if (!jsonOutput) {
+		console.log(`\n-Using Contract: ${contractId}`);
+		console.log(`-Using Operator: ${operatorId}`);
+		console.log(`-Environment: ${env}`);
+	}
 
 	// Load ABI
 	const contractJson = JSON.parse(
@@ -76,7 +80,7 @@ const main = async () => {
 
 	// Handle --info
 	if (getArgFlag('info')) {
-		await showContractInfo(env, contractId, operatorId, iface);
+		await showContractInfo(env, contractId, operatorId, iface, jsonOutput);
 		client.close();
 		return;
 	}
@@ -131,47 +135,63 @@ const main = async () => {
 	client.close();
 };
 
-async function showContractInfo(env, contractId, operatorId, iface) {
-	console.log('\n=== Contract Info ===\n');
-
+async function showContractInfo(env, contractId, operatorId, iface, jsonOutput = false) {
 	// Get admins
 	let encodedCommand = iface.encodeFunctionData('getAdmins', []);
 	let result = await readOnlyEVMFromMirrorNode(env, contractId, encodedCommand, operatorId, false);
 	const admins = iface.decodeFunctionResult('getAdmins', result)[0];
-	console.log('Admins:');
-	for (const admin of admins) {
-		const adminId = AccountId.fromEvmAddress(0, 0, admin);
-		console.log(`  - ${adminId}`);
-	}
+	const adminList = admins.map(admin => AccountId.fromEvmAddress(0, 0, admin).toString());
 
 	// Get paused status
 	encodedCommand = iface.encodeFunctionData('paused', []);
 	result = await readOnlyEVMFromMirrorNode(env, contractId, encodedCommand, operatorId, false);
 	const paused = iface.decodeFunctionResult('paused', result)[0];
-	console.log(`\nPaused: ${paused}`);
 
 	// Get graveyard
 	encodedCommand = iface.encodeFunctionData('graveyard', []);
 	result = await readOnlyEVMFromMirrorNode(env, contractId, encodedCommand, operatorId, false);
 	const graveyardAddr = iface.decodeFunctionResult('graveyard', result)[0];
-	if (graveyardAddr === '0x0000000000000000000000000000000000000000') {
-		console.log('Graveyard: Not configured');
-	} else {
-		const graveyardId = AccountId.fromEvmAddress(0, 0, graveyardAddr);
-		console.log(`Graveyard: ${graveyardId}`);
-	}
+	const graveyardId = graveyardAddr === '0x0000000000000000000000000000000000000000'
+		? null
+		: AccountId.fromEvmAddress(0, 0, graveyardAddr).toString();
 
 	// Get output tokens
 	encodedCommand = iface.encodeFunctionData('getOutputTokens', []);
 	result = await readOnlyEVMFromMirrorNode(env, contractId, encodedCommand, operatorId, false);
 	const outputTokens = iface.decodeFunctionResult('getOutputTokens', result)[0];
-	console.log('\nOutput Tokens:');
-	if (outputTokens.length === 0) {
-		console.log('  (none configured)');
+	const outputTokenList = outputTokens.map(token => AccountId.fromEvmAddress(0, 0, token).toString());
+
+	if (jsonOutput) {
+		console.log(JSON.stringify({
+			contract: contractId.toString(),
+			admins: adminList,
+			paused,
+			graveyard: graveyardId,
+			outputTokens: outputTokenList,
+		}));
 	} else {
-		for (const token of outputTokens) {
-			const tokenId = AccountId.fromEvmAddress(0, 0, token);
-			console.log(`  - ${tokenId}`);
+		console.log('\n=== Contract Info ===\n');
+
+		console.log('Admins:');
+		for (const admin of adminList) {
+			console.log(`  - ${admin}`);
+		}
+
+		console.log(`\nPaused: ${paused}`);
+
+		if (graveyardId) {
+			console.log(`Graveyard: ${graveyardId}`);
+		} else {
+			console.log('Graveyard: Not configured');
+		}
+
+		console.log('\nOutput Tokens:');
+		if (outputTokenList.length === 0) {
+			console.log('  (none configured)');
+		} else {
+			for (const token of outputTokenList) {
+				console.log(`  - ${token}`);
+			}
 		}
 	}
 }

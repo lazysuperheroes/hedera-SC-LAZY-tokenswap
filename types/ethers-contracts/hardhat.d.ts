@@ -10,7 +10,8 @@ import * as Contracts from "./index.js";
 
 declare module "@nomicfoundation/hardhat-ethers/types" {
   interface HardhatEthersHelpers extends HardhatEthersHelpersBase {
-  getContractFactory(name: 'FallbackTokenSwap', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.FallbackTokenSwap__factory>
+  getContractFactory(name: 'BaseTokenSwap', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.BaseTokenSwap__factory>
+getContractFactory(name: 'FallbackTokenSwap', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.FallbackTokenSwap__factory>
 getContractFactory(name: 'HederaTokenService', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.HederaTokenService__factory>
 getContractFactory(name: 'IBurnableHTS', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.IBurnableHTS__factory>
 getContractFactory(name: 'IHederaTokenService', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.IHederaTokenService__factory>
@@ -24,7 +25,8 @@ getContractFactory(name: 'LAZYTokenCreator', signerOrOptions?: ethers.Signer | F
 getContractFactory(name: 'NoFallbackTokenSwap', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.NoFallbackTokenSwap__factory>
 getContractFactory(name: 'UnifiedTokenSwap', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.UnifiedTokenSwap__factory>
 
-  getContractAt(name: 'FallbackTokenSwap', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.FallbackTokenSwap>
+  getContractAt(name: 'BaseTokenSwap', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.BaseTokenSwap>
+getContractAt(name: 'FallbackTokenSwap', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.FallbackTokenSwap>
 getContractAt(name: 'HederaTokenService', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.HederaTokenService>
 getContractAt(name: 'IBurnableHTS', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.IBurnableHTS>
 getContractAt(name: 'IHederaTokenService', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.IHederaTokenService>
@@ -38,7 +40,8 @@ getContractAt(name: 'LAZYTokenCreator', address: string | ethers.Addressable, si
 getContractAt(name: 'NoFallbackTokenSwap', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.NoFallbackTokenSwap>
 getContractAt(name: 'UnifiedTokenSwap', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.UnifiedTokenSwap>
 
-  deployContract(name: 'FallbackTokenSwap', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.FallbackTokenSwap>
+  deployContract(name: 'BaseTokenSwap', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.BaseTokenSwap>
+deployContract(name: 'FallbackTokenSwap', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.FallbackTokenSwap>
 deployContract(name: 'HederaTokenService', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.HederaTokenService>
 deployContract(name: 'IBurnableHTS', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IBurnableHTS>
 deployContract(name: 'IHederaTokenService', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IHederaTokenService>
@@ -52,7 +55,8 @@ deployContract(name: 'LAZYTokenCreator', signerOrOptions?: ethers.Signer | Deplo
 deployContract(name: 'NoFallbackTokenSwap', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.NoFallbackTokenSwap>
 deployContract(name: 'UnifiedTokenSwap', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.UnifiedTokenSwap>
 
-  deployContract(name: 'FallbackTokenSwap', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.FallbackTokenSwap>
+  deployContract(name: 'BaseTokenSwap', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.BaseTokenSwap>
+deployContract(name: 'FallbackTokenSwap', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.FallbackTokenSwap>
 deployContract(name: 'HederaTokenService', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.HederaTokenService>
 deployContract(name: 'IBurnableHTS', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IBurnableHTS>
 deployContract(name: 'IHederaTokenService', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IHederaTokenService>

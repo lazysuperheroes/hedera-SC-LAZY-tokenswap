@@ -16,12 +16,15 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     EnumerableSet
 } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import {
+    ReentrancyGuard
+} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title UnifiedTokenSwap
 /// @author Lazy Superheroes (lazysuperheroes.com)
 /// @notice Universal NFT swap contract with HBAR-based royalty bypass and optional graveyard integration
 /// @dev Supports multi-admin, multi-token configurations, treasury OR graveyard destinations
-contract UnifiedTokenSwap is HederaTokenServiceLite {
+contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
     using EnumerableSet for EnumerableSet.AddressSet;
     using SafeCast for uint256;
 
@@ -139,6 +142,55 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
         }
 
         paused = true;
+    }
+
+    // ============================================
+    // INTERNAL HELPERS
+    // ============================================
+
+    /// @notice Builds a tinybar transfer structure for royalty defeat
+    /// @param sender Address sending 1 tinybar
+    /// @param receiver Address receiving 1 tinybar
+    /// @param senderUsesAllowance True if sender is paying via allowance
+    /// @return transferList The constructed HBAR transfer structure
+    function _buildTinybarTransfer(
+        address sender,
+        address receiver,
+        bool senderUsesAllowance
+    ) internal pure returns (IHederaTokenServiceLite.TransferList memory transferList) {
+        transferList.transfers = new IHederaTokenServiceLite.AccountAmount[](2);
+
+        transferList.transfers[0].accountID = sender;
+        transferList.transfers[0].amount = -1;
+        transferList.transfers[0].isApproval = senderUsesAllowance;
+
+        transferList.transfers[1].accountID = receiver;
+        transferList.transfers[1].amount = 1;
+        transferList.transfers[1].isApproval = false;
+    }
+
+    /// @notice Builds a single NFT transfer structure
+    /// @param token NFT token address
+    /// @param serial Serial number to transfer
+    /// @param sender Address sending the NFT
+    /// @param receiver Address receiving the NFT
+    /// @param isApproval True if transfer uses allowance
+    /// @return tokenTransfers Array with single NFT transfer
+    function _buildNftTransferList(
+        address token,
+        uint256 serial,
+        address sender,
+        address receiver,
+        bool isApproval
+    ) internal pure returns (IHederaTokenServiceLite.TokenTransferList[] memory tokenTransfers) {
+        tokenTransfers = new IHederaTokenServiceLite.TokenTransferList[](1);
+
+        tokenTransfers[0].token = token;
+        tokenTransfers[0].nftTransfers = new IHederaTokenServiceLite.NftTransfer[](1);
+        tokenTransfers[0].nftTransfers[0].senderAccountID = sender;
+        tokenTransfers[0].nftTransfers[0].receiverAccountID = receiver;
+        tokenTransfers[0].nftTransfers[0].serialNumber = int64(serial.toUint64());
+        tokenTransfers[0].nftTransfers[0].isApproval = isApproval;
     }
 
     // ============================================
@@ -364,7 +416,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
     function swapNFTs(
         address[] calldata _inputTokens,
         uint256[] calldata _inputSerials
-    ) external {
+    ) external nonReentrant {
         if (_inputSerials.length > type(uint8).max) revert ExceedsMaxSerials();
         if (_inputTokens.length != _inputSerials.length) revert BadInput();
         if (paused) revert ContractPaused();
@@ -425,101 +477,30 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
     ) internal {
         // Step 1: Pull old NFT from user to contract
         // Contract pays user 1 tinybar to defeat royalty on incoming NFT
-        IHederaTokenServiceLite.TransferList memory hbarTransfers;
-        hbarTransfers.transfers = new IHederaTokenServiceLite.AccountAmount[](
-            2
+        int32 responseCode = cryptoTransfer(
+            _buildTinybarTransfer(address(this), msg.sender, false),
+            _buildNftTransferList(inputToken, inputSerial, msg.sender, address(this), true)
         );
-
-        // Contract sends 1 tinybar
-        hbarTransfers.transfers[0].accountID = address(this);
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = false;
-
-        // User receives 1 tinybar (defeats royalty)
-        hbarTransfers.transfers[1].accountID = msg.sender;
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
-
-        IHederaTokenServiceLite.TokenTransferList[]
-            memory pullTransfer = new IHederaTokenServiceLite.TokenTransferList[](
-                1
-            );
-
-        // Old NFT: user → contract (via allowance)
-        pullTransfer[0].token = inputToken;
-        pullTransfer[0]
-            .nftTransfers = new IHederaTokenServiceLite.NftTransfer[](1);
-        pullTransfer[0].nftTransfers[0].senderAccountID = msg.sender;
-        pullTransfer[0].nftTransfers[0].receiverAccountID = address(this);
-        pullTransfer[0].nftTransfers[0].serialNumber = int64(
-            inputSerial.toUint64()
-        );
-        pullTransfer[0].nftTransfers[0].isApproval = true;
-
-        int32 responseCode = cryptoTransfer(hbarTransfers, pullTransfer);
         if (responseCode != HederaResponseCodes.SUCCESS) {
             revert NFTTransferFailed();
         }
 
         // Step 2: Send old NFT from contract to treasury
         // Contract pays treasury 1 tinybar to defeat royalty
-        hbarTransfers.transfers[0].accountID = address(this);
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = false;
-
-        hbarTransfers.transfers[1].accountID = config.treasury;
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
-
-        IHederaTokenServiceLite.TokenTransferList[]
-            memory toTreasuryTransfer = new IHederaTokenServiceLite.TokenTransferList[](
-                1
-            );
-
-        // Old NFT: contract → treasury
-        toTreasuryTransfer[0].token = inputToken;
-        toTreasuryTransfer[0]
-            .nftTransfers = new IHederaTokenServiceLite.NftTransfer[](1);
-        toTreasuryTransfer[0].nftTransfers[0].senderAccountID = address(this);
-        toTreasuryTransfer[0].nftTransfers[0].receiverAccountID = config
-            .treasury;
-        toTreasuryTransfer[0].nftTransfers[0].serialNumber = int64(
-            inputSerial.toUint64()
+        responseCode = cryptoTransfer(
+            _buildTinybarTransfer(address(this), config.treasury, false),
+            _buildNftTransferList(inputToken, inputSerial, address(this), config.treasury, false)
         );
-        toTreasuryTransfer[0].nftTransfers[0].isApproval = false;
-
-        responseCode = cryptoTransfer(hbarTransfers, toTreasuryTransfer);
         if (responseCode != HederaResponseCodes.SUCCESS) {
             revert NFTTransferFailed();
         }
 
         // Step 3: Send new NFT to user
         // User pays contract 1 tinybar (via allowance) to defeat royalty on output NFT
-        hbarTransfers.transfers[0].accountID = msg.sender;
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = true;
-
-        hbarTransfers.transfers[1].accountID = address(this);
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
-
-        IHederaTokenServiceLite.TokenTransferList[]
-            memory sendTransfer = new IHederaTokenServiceLite.TokenTransferList[](
-                1
-            );
-
-        // New NFT: contract → user
-        sendTransfer[0].token = config.outputToken;
-        sendTransfer[0]
-            .nftTransfers = new IHederaTokenServiceLite.NftTransfer[](1);
-        sendTransfer[0].nftTransfers[0].senderAccountID = address(this);
-        sendTransfer[0].nftTransfers[0].receiverAccountID = msg.sender;
-        sendTransfer[0].nftTransfers[0].serialNumber = int64(
-            config.outputSerial.toUint64()
+        responseCode = cryptoTransfer(
+            _buildTinybarTransfer(msg.sender, address(this), true),
+            _buildNftTransferList(config.outputToken, config.outputSerial, address(this), msg.sender, false)
         );
-        sendTransfer[0].nftTransfers[0].isApproval = false;
-
-        responseCode = cryptoTransfer(hbarTransfers, sendTransfer);
         if (responseCode != HederaResponseCodes.SUCCESS) {
             revert NFTTransferFailed();
         }
@@ -533,38 +514,11 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
         SwapConfig memory config
     ) internal {
         // Step 1: Pull old NFT from user to contract (via allowance)
-        // HBAR transfer: 1 tinybar from contract to user to defeat royalty
-        IHederaTokenServiceLite.TransferList memory hbarTransfers;
-        hbarTransfers.transfers = new IHederaTokenServiceLite.AccountAmount[](
-            2
+        // Contract pays user 1 tinybar to defeat royalty on incoming NFT
+        int32 responseCode = cryptoTransfer(
+            _buildTinybarTransfer(address(this), msg.sender, false),
+            _buildNftTransferList(inputToken, inputSerial, msg.sender, address(this), true)
         );
-
-        // Contract sends 1 tinybar
-        hbarTransfers.transfers[0].accountID = address(this);
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = false;
-
-        // User receives 1 tinybar (defeats royalty)
-        hbarTransfers.transfers[1].accountID = msg.sender;
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
-
-        IHederaTokenServiceLite.TokenTransferList[]
-            memory pullTransfer = new IHederaTokenServiceLite.TokenTransferList[](
-                1
-            );
-
-        pullTransfer[0].token = inputToken;
-        pullTransfer[0]
-            .nftTransfers = new IHederaTokenServiceLite.NftTransfer[](1);
-        pullTransfer[0].nftTransfers[0].senderAccountID = msg.sender;
-        pullTransfer[0].nftTransfers[0].receiverAccountID = address(this);
-        pullTransfer[0].nftTransfers[0].serialNumber = int64(
-            inputSerial.toUint64()
-        );
-        pullTransfer[0].nftTransfers[0].isApproval = true;
-
-        int32 responseCode = cryptoTransfer(hbarTransfers, pullTransfer);
         if (responseCode != HederaResponseCodes.SUCCESS) {
             revert NFTTransferFailed();
         }
@@ -593,34 +547,13 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
         try graveyard.stakeNFTsToTheGrave(inputToken, serials) {} catch {
             revert GraveyardStakeFailed();
         }
+
         // Step 3: Send new NFT to user
-        // Reverse the payment flow: tinybar from user to contract (no allowance needed)
-        // User sends 1 tinybar (via allowance)
-        hbarTransfers.transfers[0].accountID = msg.sender;
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = true;
-
-        // Contract receives 1 tinybar (defeats royalty)
-        hbarTransfers.transfers[1].accountID = address(this);
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
-
-        IHederaTokenServiceLite.TokenTransferList[]
-            memory sendTransfer = new IHederaTokenServiceLite.TokenTransferList[](
-                1
-            );
-
-        sendTransfer[0].token = config.outputToken;
-        sendTransfer[0]
-            .nftTransfers = new IHederaTokenServiceLite.NftTransfer[](1);
-        sendTransfer[0].nftTransfers[0].senderAccountID = address(this);
-        sendTransfer[0].nftTransfers[0].receiverAccountID = msg.sender;
-        sendTransfer[0].nftTransfers[0].serialNumber = int64(
-            config.outputSerial.toUint64()
+        // User pays contract 1 tinybar (via allowance) to defeat royalty on output NFT
+        responseCode = cryptoTransfer(
+            _buildTinybarTransfer(msg.sender, address(this), true),
+            _buildNftTransferList(config.outputToken, config.outputSerial, address(this), msg.sender, false)
         );
-        sendTransfer[0].nftTransfers[0].isApproval = false;
-
-        responseCode = cryptoTransfer(hbarTransfers, sendTransfer);
         if (responseCode != HederaResponseCodes.SUCCESS) {
             revert NFTTransferFailed();
         }
@@ -634,7 +567,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
     /// @dev Uses tinybar payment to defeat royalties when loading NFTs with fallback fees
     /// @param token The NFT token address to stake
     /// @param serials Array of serial numbers to stake into the contract
-    function stakeNFTs(address token, uint256[] calldata serials) external {
+    function stakeNFTs(address token, uint256[] calldata serials) external nonReentrant {
         if (serials.length == 0 || serials.length > MAX_NFTS_PER_TX)
             revert BadInput();
 
@@ -702,7 +635,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite {
         address token,
         uint256[] calldata serials,
         address receiver
-    ) external onlyAdmin {
+    ) external onlyAdmin nonReentrant {
         if (
             serials.length == 0 ||
             serials.length > MAX_NFTS_PER_TX ||

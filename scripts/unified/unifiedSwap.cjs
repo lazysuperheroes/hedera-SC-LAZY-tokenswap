@@ -37,6 +37,7 @@ Options:
   -h, --help              Show this help message
   --gas <amount>          Gas limit (default: auto-estimate)
   --skip-allowance        Skip setting NFT allowance (if already set)
+  --json                  Output result as JSON (for automation)
 
 Environment Variables:
   ACCOUNT_ID              Hedera operator account
@@ -81,6 +82,7 @@ const main = async () => {
 		process.exit(1);
 	}
 
+	const jsonOutput = getArgFlag('json');
 	const { client, operatorId, env } = initializeClient();
 	const contractId = ContractId.fromString(contractArg);
 	const tokenId = TokenId.fromString(tokenArg);
@@ -93,10 +95,12 @@ const main = async () => {
 		serials = [Number(serialArg)];
 	}
 
-	console.log(`\n-Using Contract: ${contractId}`);
-	console.log(`-Using Operator: ${operatorId}`);
-	console.log(`-Input Token: ${tokenId}`);
-	console.log(`-Serials: ${serials.join(', ')}`);
+	if (!jsonOutput) {
+		console.log(`\n-Using Contract: ${contractId}`);
+		console.log(`-Using Operator: ${operatorId}`);
+		console.log(`-Input Token: ${tokenId}`);
+		console.log(`-Serials: ${serials.join(', ')}`);
+	}
 
 	// Load ABI
 	const contractJson = JSON.parse(
@@ -114,35 +118,65 @@ const main = async () => {
 	const result = await readOnlyEVMFromMirrorNode(env, contractId, encodedQuery, operatorId, false);
 	const configs = iface.decodeFunctionResult('getSwapConfigs', result)[0];
 
-	console.log('\n=== Swap Configurations ===\n');
-
+	// Build configuration data for output
+	const configData = [];
 	let hasInvalidConfig = false;
 	for (let i = 0; i < serials.length; i++) {
 		const config = configs[i];
 		const isValid = config.outputToken !== '0x0000000000000000000000000000000000000000';
 
-		console.log(`Serial #${serials[i]}:`);
 		if (isValid) {
 			const outputTokenId = AccountId.fromEvmAddress(0, 0, config.outputToken);
-			console.log(`  Output: ${outputTokenId}#${config.outputSerial}`);
-			console.log(`  Destination: ${config.useGraveyard ? 'Graveyard' : 'Treasury'}`);
-			if (!config.useGraveyard) {
-				const treasuryId = AccountId.fromEvmAddress(0, 0, config.treasury);
-				console.log(`  Treasury: ${treasuryId}`);
-			}
+			const treasuryId = config.useGraveyard ? null : AccountId.fromEvmAddress(0, 0, config.treasury);
+			configData.push({
+				serial: serials[i],
+				configured: true,
+				outputToken: outputTokenId.toString(),
+				outputSerial: Number(config.outputSerial),
+				destination: config.useGraveyard ? 'graveyard' : 'treasury',
+				treasury: treasuryId ? treasuryId.toString() : null,
+			});
 		} else {
-			console.log('  [NOT CONFIGURED]');
+			configData.push({ serial: serials[i], configured: false });
 			hasInvalidConfig = true;
 		}
 	}
 
+	if (!jsonOutput) {
+		console.log('\n=== Swap Configurations ===\n');
+		for (const cfg of configData) {
+			console.log(`Serial #${cfg.serial}:`);
+			if (cfg.configured) {
+				console.log(`  Output: ${cfg.outputToken}#${cfg.outputSerial}`);
+				console.log(`  Destination: ${cfg.destination === 'graveyard' ? 'Graveyard' : 'Treasury'}`);
+				if (cfg.treasury) {
+					console.log(`  Treasury: ${cfg.treasury}`);
+				}
+			} else {
+				console.log('  [NOT CONFIGURED]');
+			}
+		}
+	}
+
 	if (getArgFlag('query')) {
+		if (jsonOutput) {
+			console.log(JSON.stringify({
+				mode: 'query',
+				contract: contractId.toString(),
+				token: tokenId.toString(),
+				configurations: configData,
+			}));
+		}
 		client.close();
 		return;
 	}
 
 	if (hasInvalidConfig) {
-		console.error('\nERROR: One or more serials have no swap configuration');
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: 'One or more serials have no swap configuration' }));
+		} else {
+			console.error('\nERROR: One or more serials have no swap configuration');
+		}
 		process.exit(1);
 	}
 
@@ -152,19 +186,33 @@ const main = async () => {
 	const isPaused = iface.decodeFunctionResult('paused', pausedResult)[0];
 
 	if (isPaused) {
-		console.error('\nERROR: Contract is paused');
+		if (jsonOutput) {
+			console.log(JSON.stringify({ success: false, error: 'Contract is paused' }));
+		} else {
+			console.error('\nERROR: Contract is paused');
+		}
 		process.exit(1);
 	}
 
 	if (getArgFlag('check')) {
-		console.log('\n[Check mode] Configuration valid. Use without --check to execute.');
+		if (jsonOutput) {
+			console.log(JSON.stringify({
+				mode: 'check',
+				contract: contractId.toString(),
+				token: tokenId.toString(),
+				valid: true,
+				configurations: configData,
+			}));
+		} else {
+			console.log('\n[Check mode] Configuration valid. Use without --check to execute.');
+		}
 		client.close();
 		return;
 	}
 
 	// Set NFT allowances if not skipped
 	if (!getArgFlag('skip-allowance')) {
-		console.log('\nSetting NFT allowances...');
+		if (!jsonOutput) console.log('\nSetting NFT allowances...');
 
 		for (const serial of serials) {
 			const nftId = new NftId(tokenId, serial);
@@ -173,12 +221,12 @@ const main = async () => {
 
 			const allowanceResponse = await allowanceTx.execute(client);
 			const allowanceReceipt = await allowanceResponse.getReceipt(client);
-			console.log(`  Serial #${serial}: ${allowanceReceipt.status}`);
+			if (!jsonOutput) console.log(`  Serial #${serial}: ${allowanceReceipt.status}`);
 		}
 	}
 
 	// Execute swap
-	console.log('\nExecuting swap...');
+	if (!jsonOutput) console.log('\nExecuting swap...');
 
 	const swapData = iface.encodeFunctionData('swapNFTs', [inputTokens, inputSerials]);
 
@@ -193,10 +241,10 @@ const main = async () => {
 				operatorId,
 			);
 			gasLimit = Math.ceil(estimated * 1.2); // 20% buffer
-			console.log(`Estimated gas: ${estimated}, using: ${gasLimit}`);
+			if (!jsonOutput) console.log(`Estimated gas: ${estimated}, using: ${gasLimit}`);
 		} catch {
 			gasLimit = 400_000 * serials.length;
-			console.log(`Gas estimation failed, using default: ${gasLimit}`);
+			if (!jsonOutput) console.log(`Gas estimation failed, using default: ${gasLimit}`);
 		}
 	}
 
@@ -208,12 +256,27 @@ const main = async () => {
 	const txResponse = await tx.execute(client);
 	const receipt = await txResponse.getReceipt(client);
 
-	console.log(`\nStatus: ${receipt.status}`);
-	console.log(`Transaction ID: ${txResponse.transactionId}`);
+	const success = receipt.status.toString() === 'SUCCESS';
 
-	if (receipt.status.toString() === 'SUCCESS') {
-		console.log('\nSwap completed successfully!');
-		console.log(`Swapped ${serials.length} NFT(s)`);
+	if (jsonOutput) {
+		console.log(JSON.stringify({
+			success,
+			mode: 'swap',
+			contract: contractId.toString(),
+			token: tokenId.toString(),
+			serials,
+			transactionId: txResponse.transactionId.toString(),
+			status: receipt.status.toString(),
+			swappedCount: success ? serials.length : 0,
+		}));
+	} else {
+		console.log(`\nStatus: ${receipt.status}`);
+		console.log(`Transaction ID: ${txResponse.transactionId}`);
+
+		if (success) {
+			console.log('\nSwap completed successfully!');
+			console.log(`Swapped ${serials.length} NFT(s)`);
+		}
 	}
 
 	client.close();
