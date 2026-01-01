@@ -5,7 +5,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import { EnumerableSet } from "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import { Address } from "@openzeppelin/contracts/utils/Address.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 import { HederaResponseCodes } from "./HederaResponseCodes.sol";
 import { HederaTokenService } from "./HederaTokenService.sol";
@@ -320,7 +320,8 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 	function addContractUser(
 		address _deployer
 	) external onlyAdminOrAuthorizer returns (bool _added){
-		if (_deployer == address(0) || !_deployer.isContract()) {
+		// OZ5 removed Address.isContract() - use code.length directly
+		if (_deployer == address(0) || _deployer.code.length == 0) {
 			revert BadInput();
 		}
 		emit GasStationAccessControlEvent(msg.sender, _deployer, true, Role.GasStationContractUser);

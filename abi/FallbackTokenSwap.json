@@ -71,6 +71,27 @@
         },
         {
             "inputs": [],
+            "name": "FailedCall",
+            "type": "error"
+        },
+        {
+            "inputs": [
+                {
+                    "internalType": "uint256",
+                    "name": "balance",
+                    "type": "uint256"
+                },
+                {
+                    "internalType": "uint256",
+                    "name": "needed",
+                    "type": "uint256"
+                }
+            ],
+            "name": "InsufficientBalance",
+            "type": "error"
+        },
+        {
+            "inputs": [],
             "name": "NFTEOA2SCTransferFailed",
             "type": "error"
         },
@@ -82,6 +103,60 @@
         {
             "inputs": [],
             "name": "NFTSC2TreasuryTransferFailed",
+            "type": "error"
+        },
+        {
+            "inputs": [
+                {
+                    "internalType": "address",
+                    "name": "owner",
+                    "type": "address"
+                }
+            ],
+            "name": "OwnableInvalidOwner",
+            "type": "error"
+        },
+        {
+            "inputs": [
+                {
+                    "internalType": "address",
+                    "name": "account",
+                    "type": "address"
+                }
+            ],
+            "name": "OwnableUnauthorizedAccount",
+            "type": "error"
+        },
+        {
+            "inputs": [
+                {
+                    "internalType": "uint8",
+                    "name": "bits",
+                    "type": "uint8"
+                },
+                {
+                    "internalType": "int256",
+                    "name": "value",
+                    "type": "int256"
+                }
+            ],
+            "name": "SafeCastOverflowedIntDowncast",
+            "type": "error"
+        },
+        {
+            "inputs": [
+                {
+                    "internalType": "uint8",
+                    "name": "bits",
+                    "type": "uint8"
+                },
+                {
+                    "internalType": "uint256",
+                    "name": "value",
+                    "type": "uint256"
+                }
+            ],
+            "name": "SafeCastOverflowedUintDowncast",
             "type": "error"
         },
         {
