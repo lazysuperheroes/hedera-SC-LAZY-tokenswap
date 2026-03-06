@@ -56,12 +56,13 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {
     EnumerableMap
 } from "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /// @title BaseTokenSwap
 /// @author Lazy Superheroes (lazysuperheroes.com)
 /// @notice Abstract base contract for NFT swap functionality with shared state and admin functions
 /// @dev Provides common errors, events, state variables, and admin functions for token swap contracts
-abstract contract BaseTokenSwap is HederaTokenService, Ownable {
+abstract contract BaseTokenSwap is HederaTokenService, Ownable, ReentrancyGuard {
     using EnumerableMap for EnumerableMap.Bytes32ToUintMap;
 
     // ============================================
@@ -132,6 +133,10 @@ abstract contract BaseTokenSwap is HederaTokenService, Ownable {
         address _lgs,
         address _lazy
     ) Ownable(msg.sender) {
+        require(_swapToken != address(0), "Zero swap token");
+        require(_swapTokenTreasury != address(0), "Zero new swap token");
+        require(_lazy != address(0), "Zero lazy token");
+        require(_lgs != address(0), "Zero treasury");
         swapToken = _swapToken;
         swapTokenTreasury = _swapTokenTreasury;
         lazyToken = _lazy;
@@ -192,6 +197,11 @@ abstract contract BaseTokenSwap is HederaTokenService, Ownable {
         ) {
             revert AssociationFailed();
         }
+    }
+
+    function updateSwapTokenTreasury(address _newTreasury) external onlyOwner {
+        require(_newTreasury != address(0), "Zero address");
+        swapTokenTreasury = _newTreasury;
     }
 
     /// @notice Updates the LAZY token reward amount per swap

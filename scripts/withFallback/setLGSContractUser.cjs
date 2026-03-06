@@ -12,7 +12,7 @@ const lazyGasStationName = 'LazyGasStation';
 
 function showHelp() {
 	console.log(`
-Usage: node setLGSContractUser.js
+Usage: node setLGSContractUser.cjs
 
 Add a swap contract as an authorized user of the LazyGasStation.
 
@@ -25,7 +25,7 @@ Options:
 Note: You will be prompted to enter the Swap Contract ID interactively.
 
 Example:
-  node setLGSContractUser.js
+  node setLGSContractUser.cjs
   # Then enter: 0.0.123456
 `);
 }

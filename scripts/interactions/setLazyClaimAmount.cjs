@@ -13,7 +13,7 @@ const contractName = 'NoFallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node setLazyClaimAmount.js <contract-id> <amount>
+Usage: node setLazyClaimAmount.cjs <contract-id> <amount>
 
 Update the $LAZY claim amount on a NoFallbackTokenSwap contract.
 
@@ -25,7 +25,7 @@ Options:
   -h, --help    Show this help message
 
 Example:
-  node setLazyClaimAmount.js 0.0.123456 10
+  node setLazyClaimAmount.cjs 0.0.123456 10
 
   Sets the claim amount to 10 (which is 1 $LAZY with 1 decimal)
 `);

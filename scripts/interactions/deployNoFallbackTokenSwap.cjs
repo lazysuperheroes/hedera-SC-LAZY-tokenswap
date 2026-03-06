@@ -6,14 +6,14 @@ const {
 const fs = require('fs');
 const readlineSync = require('readline-sync');
 const { contractDeployFunction } = require('../../utils/solidityHelpers.cjs');
-const { initializeClient } = require('../../utils/clientFactory.cjs');
+const { initializeClient, validateEnvVars } = require('../../utils/clientFactory.cjs');
 const { getArgFlag } = require('../../utils/nodeHelpers.cjs');
 
 const contractName = 'NoFallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node deployNoFallbackTokenSwap.js
+Usage: node deployNoFallbackTokenSwap.cjs
 
 Deploy a new NoFallbackTokenSwap contract.
 
@@ -28,7 +28,7 @@ Options:
 
 Example:
   # Set environment variables in .env, then run:
-  node deployNoFallbackTokenSwap.js
+  node deployNoFallbackTokenSwap.cjs
 `);
 }
 
@@ -36,6 +36,11 @@ const main = async () => {
 	if (getArgFlag('h') || getArgFlag('help')) {
 		showHelp();
 		process.exit(0);
+	}
+
+	// Validate required environment variables
+	if (!validateEnvVars(['ACCOUNT_ID', 'PRIVATE_KEY', 'ENVIRONMENT', 'SWAP_TOKEN', 'TOKEN_TREASURY', 'LAZY_GAS_STATION_CONTRACT_ID', 'LAZY_TOKEN_ID'])) {
+		process.exit(1);
 	}
 
 	// Initialize client using clientFactory
@@ -58,7 +63,7 @@ const main = async () => {
 	const execute = readlineSync.keyInYNStrict('Do wish to deploy?');
 	if (execute) {
 		console.log('\n- Deploying contract...', contractName);
-		const gasLimit = 1_100_000;
+		const gasLimit = 5_500_000;
 
 		const constructorParams = new ContractFunctionParameters()
 			.addAddress(newToken.toSolidityAddress())

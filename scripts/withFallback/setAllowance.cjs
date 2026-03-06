@@ -11,7 +11,7 @@ const { initializeClient } = require('../../utils/clientFactory.cjs');
 
 function showHelp() {
 	console.log(`
-Usage: node setAllowance.js <contract-id> <token-id> <amount>
+Usage: node setAllowance.cjs <contract-id> <token-id> <amount>
 
 Set a fungible token allowance for a contract to spend on behalf of the operator.
 
@@ -24,7 +24,7 @@ Options:
   -h, --help    Show this help message
 
 Example:
-  node setAllowance.js 0.0.123456 0.0.789 1000
+  node setAllowance.cjs 0.0.123456 0.0.789 1000
 
   Grants contract 0.0.123456 permission to spend 1000 tokens (adjusted for decimals)
 `);

@@ -105,11 +105,11 @@ async function processError(error, silent, indent) {
 			abi.push(abiFragment);
 			// Use ethers.js Interface to decode (replaces abi-decoder)
 			const iface = new ethers.Interface(abi);
-			console.log('🚀 ~ file: decodeSmartContractError.js ~ line 113 ~ processError ~ error.data', error.data);
+			console.log('🚀 ~ file: decodeSmartContractError.cjs ~ line 113 ~ processError ~ error.data', error.data);
 
 			try {
 				const decodedData = iface.decodeFunctionData(abiFragment.name, error.data);
-				console.log('🚀 ~ file: decodeSmartContractError.js ~ line 113 ~ processError ~ decodedData', decodedData);
+				console.log('🚀 ~ file: decodeSmartContractError.cjs ~ line 113 ~ processError ~ decodedData', decodedData);
 
 				console.log(`${'.'.repeat(indent)}Error is ${abiFragment.name}`);
 				abiFragment.inputs.forEach((input, index) => {

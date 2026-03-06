@@ -96,7 +96,7 @@ contract NoFallbackTokenSwap is BaseTokenSwap {
     function swapNFTs(
         address[] calldata tokensToSwap,
         uint256[] calldata serials
-    ) external returns (uint256 amt) {
+    ) external nonReentrant returns (uint256 amt) {
         if (serials.length > type(uint8).max) revert ExceedsMaxSerials();
         if (tokensToSwap.length != serials.length) revert BadInput();
         if (paused) revert ContractPaused();

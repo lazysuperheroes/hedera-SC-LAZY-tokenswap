@@ -23,7 +23,7 @@ export declare namespace IHederaTokenService {
     }
 
   export interface NoFallbackTokenSwapInterface extends Interface {
-    getFunction(nameOrSignature: "getSerials" | "getTokenExpiryInfo" | "getTokenKey" | "grantTokenKyc" | "isKyc" | "lazyGasStation" | "lazyPmtAmt" | "lazyToken" | "owner" | "pauseToken" | "paused" | "removeSwapConfig" | "renounceOwnership" | "retrieveLazy" | "revokeTokenKyc" | "swapNFTs" | "swapToken" | "swapTokenTreasury" | "transferHbar" | "transferOwnership" | "unpauseToken" | "updateClaimAmount" | "updateLGS" | "updateLazyToken" | "updatePauseStatus" | "updateSwapConfig" | "updateSwapToken" | "updateTokenExpiryInfo" | "updateTokenKeys"): FunctionFragment;
+    getFunction(nameOrSignature: "getSerials" | "getTokenExpiryInfo" | "getTokenKey" | "grantTokenKyc" | "isKyc" | "lazyGasStation" | "lazyPmtAmt" | "lazyToken" | "owner" | "pauseToken" | "paused" | "removeSwapConfig" | "renounceOwnership" | "retrieveLazy" | "revokeTokenKyc" | "swapNFTs" | "swapToken" | "swapTokenTreasury" | "transferHbar" | "transferOwnership" | "unpauseToken" | "updateClaimAmount" | "updateLGS" | "updateLazyToken" | "updatePauseStatus" | "updateSwapConfig" | "updateSwapToken" | "updateSwapTokenTreasury" | "updateTokenExpiryInfo" | "updateTokenKeys"): FunctionFragment;
 
     getEvent(nameOrSignatureOrTopic: "OwnershipTransferred" | "TokenSwapEvent"): EventFragment;
 
@@ -54,6 +54,7 @@ encodeFunctionData(functionFragment: 'updateLazyToken', values: [AddressLike]): 
 encodeFunctionData(functionFragment: 'updatePauseStatus', values: [boolean]): string;
 encodeFunctionData(functionFragment: 'updateSwapConfig', values: [BigNumberish[], BytesLike[]]): string;
 encodeFunctionData(functionFragment: 'updateSwapToken', values: [AddressLike]): string;
+encodeFunctionData(functionFragment: 'updateSwapTokenTreasury', values: [AddressLike]): string;
 encodeFunctionData(functionFragment: 'updateTokenExpiryInfo', values: [AddressLike, IHederaTokenService.ExpiryStruct]): string;
 encodeFunctionData(functionFragment: 'updateTokenKeys', values: [AddressLike, IHederaTokenService.TokenKeyStruct[]]): string;
 
@@ -84,6 +85,7 @@ decodeFunctionResult(functionFragment: 'updateLazyToken', data: BytesLike): Resu
 decodeFunctionResult(functionFragment: 'updatePauseStatus', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'updateSwapConfig', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'updateSwapToken', data: BytesLike): Result;
+decodeFunctionResult(functionFragment: 'updateSwapTokenTreasury', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'updateTokenExpiryInfo', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'updateTokenKeys', data: BytesLike): Result;
   }
@@ -363,6 +365,14 @@ decodeFunctionResult(functionFragment: 'updateTokenKeys', data: BytesLike): Resu
     
 
     
+    updateSwapTokenTreasury: TypedContractMethod<
+      [_newTreasury: AddressLike, ],
+      [void],
+      'nonpayable'
+    >
+    
+
+    
     updateTokenExpiryInfo: TypedContractMethod<
       [token: AddressLike, expiryInfo: IHederaTokenService.ExpiryStruct, ],
       [bigint],
@@ -513,6 +523,11 @@ getFunction(nameOrSignature: 'updateSwapConfig'): TypedContractMethod<
     >;
 getFunction(nameOrSignature: 'updateSwapToken'): TypedContractMethod<
       [_swapToken: AddressLike, ],
+      [void],
+      'nonpayable'
+    >;
+getFunction(nameOrSignature: 'updateSwapTokenTreasury'): TypedContractMethod<
+      [_newTreasury: AddressLike, ],
       [void],
       'nonpayable'
     >;

@@ -2,18 +2,21 @@ const {
 	AccountId,
 	ContractId,
 	ContractExecuteTransaction,
+	Hbar,
+	TransferTransaction,
 } = require('@hashgraph/sdk');
 const fs = require('fs');
 const { ethers } = require('ethers');
 const { getArgFlag, getArg } = require('../../utils/nodeHelpers.cjs');
 const { initializeClient } = require('../../utils/clientFactory.cjs');
 const { readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers.cjs');
+const { checkMirrorHbarBalance } = require('../../utils/hederaMirrorHelpers.cjs');
 
 const contractName = 'UnifiedTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node adminManagement.js --contract <id> [action] [options]
+Usage: node adminManagement.cjs --contract <id> [action] [options]
 
 Manage admins and settings for a UnifiedTokenSwap contract.
 
@@ -27,6 +30,7 @@ Actions (choose one):
   --pause                 Pause the contract
   --unpause               Unpause the contract
   --info                  Display current contract configuration
+  --fund-hbar <amount>    Send HBAR to contract (in whole HBAR, e.g., 5)
 
 Options:
   -h, --help              Show this help message
@@ -39,10 +43,11 @@ Environment Variables:
   ENVIRONMENT             Network (TEST, MAIN, PREVIEW, LOCAL)
 
 Examples:
-  node adminManagement.js --contract 0.0.123456 --info
-  node adminManagement.js --contract 0.0.123456 --add-admin 0.0.789012
-  node adminManagement.js --contract 0.0.123456 --unpause
-  node adminManagement.js --contract 0.0.123456 --set-graveyard 0.0.456789
+  node adminManagement.cjs --contract 0.0.123456 --info
+  node adminManagement.cjs --contract 0.0.123456 --add-admin 0.0.789012
+  node adminManagement.cjs --contract 0.0.123456 --unpause
+  node adminManagement.cjs --contract 0.0.123456 --set-graveyard 0.0.456789
+  node adminManagement.cjs --contract 0.0.123456 --fund-hbar 5
 `);
 }
 
@@ -77,6 +82,25 @@ const main = async () => {
 		),
 	);
 	const iface = new ethers.Interface(contractJson.abi);
+
+	// Pre-flight admin verification (skip for read-only --info and --fund-hbar)
+	if (!getArgFlag('info') && !getArg('fund-hbar')) {
+		try {
+			const operatorEvmAddress = operatorId.toSolidityAddress();
+			const adminCheckData = iface.encodeFunctionData('isAdmin', [operatorEvmAddress]);
+			const adminCheckResult = await readOnlyEVMFromMirrorNode(env, contractId, adminCheckData, operatorId, false);
+			const isAdmin = iface.decodeFunctionResult('isAdmin', adminCheckResult)[0];
+			if (!isAdmin) {
+				console.error(`\nERROR: Operator ${operatorId} is not an admin of contract ${contractId}\n`);
+				console.error(`Current admins can be checked with:`);
+				console.error(`  node adminManagement.cjs --contract ${contractId} --info\n`);
+				process.exit(1);
+			}
+		} catch (e) {
+			console.warn(`\nWARNING: Could not verify admin status via mirror node: ${e.message || e}`);
+			console.warn('Proceeding without pre-flight check...\n');
+		}
+	}
 
 	// Handle --info
 	if (getArgFlag('info')) {
@@ -113,6 +137,37 @@ const main = async () => {
 		functionName = 'updatePauseStatus';
 		params = iface.encodeFunctionData(functionName, [false]);
 		description = 'Unpausing contract';
+	} else if (getArg('fund-hbar')) {
+		const hbarAmount = Number(getArg('fund-hbar'));
+		if (!hbarAmount || hbarAmount <= 0) {
+			console.error('ERROR: --fund-hbar requires a positive number (in whole HBAR)');
+			process.exit(1);
+		}
+
+		console.log(`\nSending ${hbarAmount} HBAR to contract ${contractId}...`);
+
+		const transferTx = new TransferTransaction()
+			.addHbarTransfer(operatorId, Hbar.from(-hbarAmount))
+			.addHbarTransfer(contractId, Hbar.from(hbarAmount));
+
+		const txResponse = await transferTx.execute(client);
+		const receipt = await txResponse.getReceipt(client);
+
+		if (jsonOutput) {
+			console.log(JSON.stringify({
+				success: receipt.status.toString() === 'SUCCESS',
+				action: 'fund-hbar',
+				contract: contractId.toString(),
+				amount: hbarAmount,
+				status: receipt.status.toString(),
+			}));
+		} else {
+			console.log(`Status: ${receipt.status}`);
+			console.log(`Transaction ID: ${txResponse.transactionId}`);
+		}
+
+		client.close();
+		return;
 	} else {
 		console.error('ERROR: No action specified');
 		showHelp();
@@ -161,6 +216,14 @@ async function showContractInfo(env, contractId, operatorId, iface, jsonOutput =
 	const outputTokens = iface.decodeFunctionResult('getOutputTokens', result)[0];
 	const outputTokenList = outputTokens.map(token => AccountId.fromEvmAddress(0, 0, token).toString());
 
+	// Get HBAR balance
+	let hbarBalance = null;
+	try {
+		hbarBalance = await checkMirrorHbarBalance(env, contractId);
+	} catch {
+		// Mirror node query failed, balance unknown
+	}
+
 	if (jsonOutput) {
 		console.log(JSON.stringify({
 			contract: contractId.toString(),
@@ -168,6 +231,7 @@ async function showContractInfo(env, contractId, operatorId, iface, jsonOutput =
 			paused,
 			graveyard: graveyardId,
 			outputTokens: outputTokenList,
+			hbarBalance: hbarBalance !== null ? hbarBalance : 'unknown',
 		}));
 	} else {
 		console.log('\n=== Contract Info ===\n');
@@ -183,6 +247,13 @@ async function showContractInfo(env, contractId, operatorId, iface, jsonOutput =
 			console.log(`Graveyard: ${graveyardId}`);
 		} else {
 			console.log('Graveyard: Not configured');
+		}
+
+		if (hbarBalance !== null) {
+			const hbarFormatted = (hbarBalance / 100_000_000).toFixed(4);
+			console.log(`\nHBAR Balance: ${hbarFormatted} HBAR (${hbarBalance} tinybars)`);
+		} else {
+			console.log('\nHBAR Balance: (unable to query)');
 		}
 
 		console.log('\nOutput Tokens:');

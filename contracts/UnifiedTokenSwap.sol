@@ -193,6 +193,39 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
         tokenTransfers[0].nftTransfers[0].isApproval = isApproval;
     }
 
+    /// @notice Pulls old NFT from user to contract with tinybar royalty defeat
+    function _pullNftFromUser(address token, uint256 serial) internal {
+        int32 responseCode = cryptoTransfer(
+            _buildTinybarTransfer(address(this), msg.sender, false),
+            _buildNftTransferList(token, serial, msg.sender, address(this), true)
+        );
+        if (responseCode != HederaResponseCodes.SUCCESS) {
+            revert NFTTransferFailed();
+        }
+    }
+
+    /// @notice Sends new NFT from contract to user with tinybar royalty defeat
+    function _sendNftToUser(address token, uint256 serial) internal {
+        int32 responseCode = cryptoTransfer(
+            _buildTinybarTransfer(msg.sender, address(this), true),
+            _buildNftTransferList(token, serial, address(this), msg.sender, false)
+        );
+        if (responseCode != HederaResponseCodes.SUCCESS) {
+            revert NFTTransferFailed();
+        }
+    }
+
+    /// @notice Associates a token with this contract, reverting if association fails
+    function _associateIfNeeded(address _token) internal {
+        int32 responseCode = associateToken(address(this), _token);
+        if (
+            !(responseCode == HederaResponseCodes.SUCCESS ||
+                responseCode == HederaResponseCodes.TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT)
+        ) {
+            revert AssociationFailed();
+        }
+    }
+
     // ============================================
     // ADMIN MANAGEMENT
     // ============================================
@@ -267,14 +300,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
 
         // Skip association if already tracked in either set
         if (!inputTokens.contains(_token) && !outputTokens.contains(_token)) {
-            int32 responseCode = associateToken(address(this), _token);
-            if (
-                !(responseCode == HederaResponseCodes.SUCCESS ||
-                    responseCode ==
-                    HederaResponseCodes.TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT)
-            ) {
-                revert AssociationFailed();
-            }
+            _associateIfNeeded(_token);
         }
 
         // Always add to output tokens set (even if already in input set)
@@ -328,6 +354,8 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
             // Both treasury and graveyard flows pull NFT to contract first
             _ensureInputTokenAssociated(_inputTokens[i]);
 
+            if (_configs[i].outputToken == address(0)) revert BadInput();
+
             bytes32 hash = keccak256(
                 abi.encodePacked(_inputTokens[i], _inputSerials[i])
             );
@@ -348,14 +376,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
         }
 
         // Associate the token
-        int32 responseCode = associateToken(address(this), _token);
-        if (
-            !(responseCode == HederaResponseCodes.SUCCESS ||
-                responseCode ==
-                HederaResponseCodes.TOKEN_ALREADY_ASSOCIATED_TO_ACCOUNT)
-        ) {
-            revert AssociationFailed();
-        }
+        _associateIfNeeded(_token);
 
         // Track in input tokens set
         inputTokens.add(_token);
@@ -477,17 +498,11 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
     ) internal {
         // Step 1: Pull old NFT from user to contract
         // Contract pays user 1 tinybar to defeat royalty on incoming NFT
-        int32 responseCode = cryptoTransfer(
-            _buildTinybarTransfer(address(this), msg.sender, false),
-            _buildNftTransferList(inputToken, inputSerial, msg.sender, address(this), true)
-        );
-        if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert NFTTransferFailed();
-        }
+        _pullNftFromUser(inputToken, inputSerial);
 
         // Step 2: Send old NFT from contract to treasury
         // Contract pays treasury 1 tinybar to defeat royalty
-        responseCode = cryptoTransfer(
+        int32 responseCode = cryptoTransfer(
             _buildTinybarTransfer(address(this), config.treasury, false),
             _buildNftTransferList(inputToken, inputSerial, address(this), config.treasury, false)
         );
@@ -497,13 +512,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
 
         // Step 3: Send new NFT to user
         // User pays contract 1 tinybar (via allowance) to defeat royalty on output NFT
-        responseCode = cryptoTransfer(
-            _buildTinybarTransfer(msg.sender, address(this), true),
-            _buildNftTransferList(config.outputToken, config.outputSerial, address(this), msg.sender, false)
-        );
-        if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert NFTTransferFailed();
-        }
+        _sendNftToUser(config.outputToken, config.outputSerial);
     }
 
     /// @notice Processes a swap with graveyard destination
@@ -515,13 +524,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
     ) internal {
         // Step 1: Pull old NFT from user to contract (via allowance)
         // Contract pays user 1 tinybar to defeat royalty on incoming NFT
-        int32 responseCode = cryptoTransfer(
-            _buildTinybarTransfer(address(this), msg.sender, false),
-            _buildNftTransferList(inputToken, inputSerial, msg.sender, address(this), true)
-        );
-        if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert NFTTransferFailed();
-        }
+        _pullNftFromUser(inputToken, inputSerial);
 
         // Prepare serials array for graveyard stake
         uint256[] memory serials = new uint256[](1);
@@ -550,13 +553,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
 
         // Step 3: Send new NFT to user
         // User pays contract 1 tinybar (via allowance) to defeat royalty on output NFT
-        responseCode = cryptoTransfer(
-            _buildTinybarTransfer(msg.sender, address(this), true),
-            _buildNftTransferList(config.outputToken, config.outputSerial, address(this), msg.sender, false)
-        );
-        if (responseCode != HederaResponseCodes.SUCCESS) {
-            revert NFTTransferFailed();
-        }
+        _sendNftToUser(config.outputToken, config.outputSerial);
     }
 
     // ============================================
@@ -572,20 +569,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
             revert BadInput();
 
         // Build transfer: tinybar from contract to sender + NFTs from sender to contract
-        IHederaTokenServiceLite.TransferList memory hbarTransfers;
-        hbarTransfers.transfers = new IHederaTokenServiceLite.AccountAmount[](
-            2
-        );
-
-        // Contract sends 1 tinybar to defeat royalty
-        hbarTransfers.transfers[0].accountID = address(this);
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = false;
-
-        // Sender receives 1 tinybar
-        hbarTransfers.transfers[1].accountID = msg.sender;
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
+        IHederaTokenServiceLite.TransferList memory hbarTransfers = _buildTinybarTransfer(address(this), msg.sender, false);
 
         // NFT transfers: all serials from sender to contract
         IHederaTokenServiceLite.TokenTransferList[]
@@ -644,20 +628,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
 
         // Build transfer: tinybar from receiver to contract + NFTs from contract to receiver
         // Receiver pays 1 tinybar (via allowance) to defeat royalty on outgoing NFTs
-        IHederaTokenServiceLite.TransferList memory hbarTransfers;
-        hbarTransfers.transfers = new IHederaTokenServiceLite.AccountAmount[](
-            2
-        );
-
-        // Receiver sends 1 tinybar (via allowance)
-        hbarTransfers.transfers[0].accountID = receiver;
-        hbarTransfers.transfers[0].amount = -1;
-        hbarTransfers.transfers[0].isApproval = true;
-
-        // Contract receives 1 tinybar
-        hbarTransfers.transfers[1].accountID = address(this);
-        hbarTransfers.transfers[1].amount = 1;
-        hbarTransfers.transfers[1].isApproval = false;
+        IHederaTokenServiceLite.TransferList memory hbarTransfers = _buildTinybarTransfer(receiver, address(this), true);
 
         // NFT transfers: all serials from contract to receiver
         IHederaTokenServiceLite.TokenTransferList[]

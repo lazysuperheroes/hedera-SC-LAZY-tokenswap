@@ -15,7 +15,7 @@ const contractName = 'FallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node prepareForStakedSwap.js <contract-id> <tokens>
+Usage: node prepareForStakedSwap.cjs <contract-id> <tokens>
 
 Associate tokens to a FallbackTokenSwap contract for staked swap operations.
 
@@ -29,7 +29,7 @@ Options:
 Note: Tokens must not already be associated to the contract.
 
 Example:
-  node prepareForStakedSwap.js 0.0.123456 0.0.789,0.0.999
+  node prepareForStakedSwap.cjs 0.0.123456 0.0.789,0.0.999
 
   Associates tokens 0.0.789 and 0.0.999 to contract 0.0.123456
 `);

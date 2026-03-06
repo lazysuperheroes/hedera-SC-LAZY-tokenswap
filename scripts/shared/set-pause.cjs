@@ -2,8 +2,8 @@
  * Unified pause/unpause script for TokenSwap contracts
  *
  * Usage:
- *   node set-pause.js --pause 0.0.CONTRACT_ID [--fallback]
- *   node set-pause.js --unpause 0.0.CONTRACT_ID [--fallback]
+ *   node set-pause.cjs --pause 0.0.CONTRACT_ID [--fallback]
+ *   node set-pause.cjs --unpause 0.0.CONTRACT_ID [--fallback]
  *
  * Options:
  *   --pause      Pause the contract
@@ -22,7 +22,7 @@ const { initializeClient } = require('../../utils/clientFactory.cjs');
 
 function showHelp() {
 	console.log(`
-Usage: node set-pause.js [options] <contract-id>
+Usage: node set-pause.cjs [options] <contract-id>
 
 Set the pause status of a TokenSwap contract.
 
@@ -44,13 +44,13 @@ Multi-Sig Options:
 
 Examples:
   # Pause a NoFallbackTokenSwap contract
-  node set-pause.js --pause 0.0.123456
+  node set-pause.cjs --pause 0.0.123456
 
   # Unpause a FallbackTokenSwap contract
-  node set-pause.js --unpause 0.0.123456 --fallback
+  node set-pause.cjs --unpause 0.0.123456 --fallback
 
   # Pause with multi-sig (2-of-N threshold)
-  node set-pause.js --pause 0.0.123456 --multisig --threshold=2
+  node set-pause.cjs --pause 0.0.123456 --multisig --threshold=2
 `);
 }
 

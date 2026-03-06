@@ -119,13 +119,13 @@ describe('Deployment: ', function () {
 		// Create Alice account
 		alicePK = PrivateKey.generateED25519();
 		aliceId = await accountCreator(client, alicePK, 150);
-		console.log('Alice account ID:', aliceId.toString(), '\nkey:', alicePK.toString());
+		console.log('Alice account ID:', aliceId.toString());
 		expect(aliceId.toString().match(addressRegex).length == 2).to.be.true;
 
 		// Create Bob account
 		bobPK = PrivateKey.generateED25519();
 		bobId = await accountCreator(client, bobPK, 100);
-		console.log('Bob account ID:', bobId.toString(), '\nkey:', bobPK.toString());
+		console.log('Bob account ID:', bobId.toString());
 		expect(bobId.toString().match(addressRegex).length == 2).to.be.true;
 
 		// Mint NFT collections

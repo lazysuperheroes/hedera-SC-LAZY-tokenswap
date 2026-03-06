@@ -13,7 +13,7 @@ const contractName = 'NoFallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node checkConfigForTokens.js <contract-id> <tokens> <serials>
+Usage: node checkConfigForTokens.cjs <contract-id> <tokens> <serials>
 
 Check swap configuration for specific tokens on a NoFallbackTokenSwap contract.
 
@@ -27,7 +27,7 @@ Options:
   --json        Output results in JSON format
 
 Example:
-  node checkConfigForTokens.js 0.0.123 0.0.456,0.0.789 1,2:3,4
+  node checkConfigForTokens.cjs 0.0.123 0.0.456,0.0.789 1,2:3,4
 
   This checks serials 1,2 from token 0.0.456 and serials 3,4 from token 0.0.789
 `);

@@ -16,7 +16,7 @@ const contractName = 'FallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node tokenSwapWithFallback.js <contract-id> <tokens> <serials>
+Usage: node tokenSwapWithFallback.cjs <contract-id> <tokens> <serials>
 
 Execute a token swap on a FallbackTokenSwap contract.
 
@@ -30,7 +30,7 @@ Options:
   --yes           Skip confirmation prompts (for automation/CI)
 
 Example:
-  node tokenSwapWithFallback.js 0.0.123 0.0.456,0.0.789 1,2:3,4
+  node tokenSwapWithFallback.cjs 0.0.123 0.0.456,0.0.789 1,2:3,4
 
   This swaps serials 1,2 from token 0.0.456 and serials 3,4 from token 0.0.789
 `);

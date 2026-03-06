@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const { ContractCallQuery, Client, TransactionRecordQuery, ContractExecuteTransaction, ContractCreateFlow } = require('@hashgraph/sdk');
 const { getBaseURL } = require('./hederaMirrorHelpers.cjs');
 const { formatTransactionAnalysis } = require('./transactionHelpers.cjs');
+const { sleep } = require('./nodeHelpers.cjs');
 dotenv.config();
 
 const SLEEP_TIME = process.env.SLEEP_TIME ?? 5000;
@@ -180,8 +181,6 @@ async function parseErrorTransactionId(envOrClient, transactionId, ifaceOrArray)
 	const webFormatTxId = transactionId.accountId.toString() + '-' + transactionId.validStart.toString().substring(0, 10) + '-' + transactionId.validStart.toString().substring(11, 21);
 	url += `/api/v1/contracts/results/${webFormatTxId}`;
 
-	// console.log(' -Calling mirror node for transaction:', transactionId.toString(), url);
-
 	const response = await axios.get(url);
 	if (response.status != 200) {
 		console.log(' -ERROR', response.status, ' from mirror node');
@@ -350,7 +349,6 @@ async function contractExecuteFunction(contractId, iface, client, gasLim, fcnNam
 			console.log(parseError(iface, record.contractFunctionResult.bytes));
 		}
 	}
-	// console.log('Contract Results:', contractResults);
 	return [contractExecuteRx, contractResults, record];
 }
 
@@ -405,19 +403,11 @@ async function contractDeployFunction(client, bytecode, gasLim = 800_000, params
 	return [contractId, contractAddress];
 }
 
-// sleep function
-function sleep(ms) {
-	return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 module.exports = {
 	parseError,
 	parseErrorTransactionId,
 	contractExecuteQuery,
 	contractExecuteFunction,
-	useSetter,
 	readOnlyEVMFromMirrorNode,
-	linkBytecode,
 	contractDeployFunction,
-	getBaseURL,
 };

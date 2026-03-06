@@ -30,8 +30,6 @@ export type { IHederaTokenService } from './interfaces/IHederaTokenService.sol/I
 export { IHederaTokenService__factory } from './factories/interfaces/IHederaTokenService.sol/IHederaTokenService__factory.js';
 export type { IHederaTokenServiceLite } from './interfaces/IHederaTokenServiceLite.sol/IHederaTokenServiceLite.js';
 export { IHederaTokenServiceLite__factory } from './factories/interfaces/IHederaTokenServiceLite.sol/IHederaTokenServiceLite__factory.js';
-export type { ILazyDelegateRegistry } from './interfaces/ILazyDelegateRegistry.sol/ILazyDelegateRegistry.js';
-export { ILazyDelegateRegistry__factory } from './factories/interfaces/ILazyDelegateRegistry.sol/ILazyDelegateRegistry__factory.js';
 export type { ILazyGasStation } from './interfaces/ILazyGasStation.sol/ILazyGasStation.js';
 export { ILazyGasStation__factory } from './factories/interfaces/ILazyGasStation.sol/ILazyGasStation__factory.js';
 export type { IRoles } from './interfaces/IRoles.sol/IRoles.js';

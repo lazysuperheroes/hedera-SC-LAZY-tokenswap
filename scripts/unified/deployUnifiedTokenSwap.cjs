@@ -10,7 +10,7 @@ const contractName = 'UnifiedTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node deployUnifiedTokenSwap.js [options]
+Usage: node deployUnifiedTokenSwap.cjs [options]
 
 Deploy a new UnifiedTokenSwap contract to the Hedera network.
 
@@ -27,8 +27,8 @@ Environment Variables:
   ENVIRONMENT             Network (TEST, MAIN, PREVIEW, LOCAL)
 
 Example:
-  node deployUnifiedTokenSwap.js --graveyard 0.0.123456
-  node deployUnifiedTokenSwap.js --graveyard 0.0.0 --gas 6000000
+  node deployUnifiedTokenSwap.cjs --graveyard 0.0.123456
+  node deployUnifiedTokenSwap.cjs --graveyard 0.0.0 --gas 6000000
 `);
 }
 
@@ -108,14 +108,16 @@ const main = async () => {
 		if (graveyardAddress === '0x0000000000000000000000000000000000000000') {
 			console.log('\nNote: Graveyard not configured. To use graveyard features:');
 			console.log('  1. Deploy or locate a Token Graveyard contract');
-			console.log('  2. Run: node adminManagement.js --contract <id> --set-graveyard <graveyard-id>');
+			console.log('  2. Run: node adminManagement.cjs --contract <id> --set-graveyard <graveyard-id>');
 			console.log('  3. Register this contract as ContractUser on the graveyard');
 		}
 
 		console.log('\nNext steps:');
-		console.log('  1. Add output tokens: node setupSwapConfig.js --contract <id> --add-token <token-id>');
-		console.log('  2. Configure swaps: node setupSwapConfig.js --contract <id> --add-swap ...');
-		console.log('  3. Unpause: node adminManagement.js --contract <id> --unpause');
+		console.log(`  1. Fund contract:    node adminManagement.cjs --contract ${contractId} --fund-hbar 5`);
+		console.log(`  2. Add output token: node setupSwapConfig.cjs --contract ${contractId} --add-token <token-id>`);
+		console.log(`  3. Stake NFTs:       node stakeNFTs.cjs --contract ${contractId} --token <token-id> --serials 1,2,3`);
+		console.log(`  4. Configure swaps:  node setupSwapConfig.cjs --contract ${contractId} --batch-add swaps.json`);
+		console.log(`  5. Unpause:          node adminManagement.cjs --contract ${contractId} --unpause`);
 	}
 
 	client.close();

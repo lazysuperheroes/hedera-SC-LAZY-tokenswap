@@ -5,6 +5,7 @@ const {
 	AccountAllowanceApproveTransaction,
 	NftId,
 	TokenId,
+	Hbar,
 } = require('@hashgraph/sdk');
 const fs = require('fs');
 const { ethers } = require('ethers');
@@ -12,12 +13,13 @@ const { getArgFlag, getArg } = require('../../utils/nodeHelpers.cjs');
 const { initializeClient } = require('../../utils/clientFactory.cjs');
 const { readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers.cjs');
 const { estimateGas } = require('../../utils/gasHelpers.cjs');
+const { checkHbarAllowances } = require('../../utils/hederaMirrorHelpers.cjs');
 
 const contractName = 'UnifiedTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node unifiedSwap.js --contract <id> [options]
+Usage: node unifiedSwap.cjs --contract <id> [options]
 
 Perform NFT swaps using UnifiedTokenSwap contract.
 
@@ -36,7 +38,7 @@ Query Options:
 Options:
   -h, --help              Show this help message
   --gas <amount>          Gas limit (default: auto-estimate)
-  --skip-allowance        Skip setting NFT allowance (if already set)
+  --skip-allowance        Skip setting NFT and HBAR allowances (if already set)
   --json                  Output result as JSON (for automation)
 
 Environment Variables:
@@ -44,18 +46,24 @@ Environment Variables:
   PRIVATE_KEY             Operator private key
   ENVIRONMENT             Network (TEST, MAIN, PREVIEW, LOCAL)
 
+Notes:
+  The swap requires two types of allowances:
+  1. NFT allowance - grants contract permission to transfer your old NFT
+  2. HBAR allowance - grants contract 1 tinybar per swap for royalty defeat
+  Both are set automatically unless --skip-allowance is used.
+
 Examples:
   # Query swap configuration
-  node unifiedSwap.js --contract 0.0.123456 --token 0.0.111111 --serial 1 --query
+  node unifiedSwap.cjs --contract 0.0.123456 --token 0.0.111111 --serial 1 --query
 
   # Execute single swap
-  node unifiedSwap.js --contract 0.0.123456 --token 0.0.111111 --serial 1
+  node unifiedSwap.cjs --contract 0.0.123456 --token 0.0.111111 --serial 1
 
   # Execute multiple swaps (same token)
-  node unifiedSwap.js --contract 0.0.123456 --token 0.0.111111 --serials 1,2,3
+  node unifiedSwap.cjs --contract 0.0.123456 --token 0.0.111111 --serials 1,2,3
 
   # Check and execute
-  node unifiedSwap.js --contract 0.0.123456 --token 0.0.111111 --serial 1 --check
+  node unifiedSwap.cjs --contract 0.0.123456 --token 0.0.111111 --serial 1 --check
 `);
 }
 
@@ -210,8 +218,9 @@ const main = async () => {
 		return;
 	}
 
-	// Set NFT allowances if not skipped
+	// Set allowances if not skipped
 	if (!getArgFlag('skip-allowance')) {
+		// Set NFT allowances
 		if (!jsonOutput) console.log('\nSetting NFT allowances...');
 
 		for (const serial of serials) {
@@ -223,6 +232,40 @@ const main = async () => {
 			const allowanceReceipt = await allowanceResponse.getReceipt(client);
 			if (!jsonOutput) console.log(`  Serial #${serial}: ${allowanceReceipt.status}`);
 		}
+
+		// Set HBAR allowance (1 tinybar per swap for royalty defeat)
+		if (!jsonOutput) console.log('\nChecking HBAR allowance...');
+
+		const requiredTinybars = serials.length;
+		let currentAllowance = 0;
+
+		try {
+			const allowances = await checkHbarAllowances(env, operatorId);
+			if (Array.isArray(allowances)) {
+				for (const a of allowances) {
+					if (a.spender === contractId.toString()) {
+						currentAllowance = Number(a.amount);
+						break;
+					}
+				}
+			}
+		} catch {
+			// Mirror node query failed, proceed with setting allowance
+		}
+
+		if (currentAllowance < requiredTinybars) {
+			const hbarAllowanceAmount = Math.max(requiredTinybars, 100); // Set at least 100 tinybars for future swaps
+			if (!jsonOutput) console.log(`  Current: ${currentAllowance} tinybars, needed: ${requiredTinybars}. Setting to ${hbarAllowanceAmount}...`);
+
+			const hbarAllowanceTx = new AccountAllowanceApproveTransaction()
+				.approveHbarAllowance(operatorId, contractId, Hbar.fromTinybars(hbarAllowanceAmount));
+
+			const hbarResponse = await hbarAllowanceTx.execute(client);
+			const hbarReceipt = await hbarResponse.getReceipt(client);
+			if (!jsonOutput) console.log(`  HBAR allowance: ${hbarReceipt.status}`);
+		} else {
+			if (!jsonOutput) console.log(`  HBAR allowance sufficient (${currentAllowance} tinybars)`);
+		}
 	}
 
 	// Execute swap
@@ -233,19 +276,17 @@ const main = async () => {
 	// Estimate gas or use provided
 	let gasLimit = Number(getArg('gas'));
 	if (!gasLimit) {
-		try {
-			const estimated = await estimateGas(
-				env,
-				contractId,
-				swapData,
-				operatorId,
-			);
-			gasLimit = Math.ceil(estimated * 1.2); // 20% buffer
-			if (!jsonOutput) console.log(`Estimated gas: ${estimated}, using: ${gasLimit}`);
-		} catch {
-			gasLimit = 400_000 * serials.length;
-			if (!jsonOutput) console.log(`Gas estimation failed, using default: ${gasLimit}`);
-		}
+		const fallbackGas = 400_000 * serials.length;
+		const gasResult = await estimateGas(
+			env,
+			contractId,
+			iface,
+			operatorId,
+			'swapNFTs',
+			[inputTokens, inputSerials],
+			fallbackGas,
+		);
+		gasLimit = gasResult.gasLimit;
 	}
 
 	const tx = new ContractExecuteTransaction()

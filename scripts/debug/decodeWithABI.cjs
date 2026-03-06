@@ -255,13 +255,13 @@ async function main() {
 	// get arguments from the command line, ensure there are at least 2 arguments
 	const args = process.argv.slice(2);
 	if (args.length < 2) {
-		console.log('usage: node decodeWithABI.js contract <encoded>');
-		console.log('   OR: node decodeWithABI.js contract functionName <encoded>');
-		console.log('   OR: node decodeWithABI.js contract --manual "type1,type2,..." <encoded>');
-		console.log('example: node .\\scripts\\decodeWithABI.js MissionFactory 0x0a45aa1f0000000000000000000000000000000000000000000000000000000000000000');
-		console.log('example: node .\\scripts\\decodeWithABI.js MissionFactory 0a45 aa1f 0000 0000 0000...');
-		console.log('example: node .\\scripts\\decodeWithABI.js LazyLotto createPool <encoded>');
-		console.log('example: node .\\scripts\\decodeWithABI.js HederaTokenService --manual "tuple(...),address[],tuple(...)" <encoded>');
+		console.log('usage: node decodeWithABI.cjs contract <encoded>');
+		console.log('   OR: node decodeWithABI.cjs contract functionName <encoded>');
+		console.log('   OR: node decodeWithABI.cjs contract --manual "type1,type2,..." <encoded>');
+		console.log('example: node .\\scripts\\decodeWithABI.cjs MissionFactory 0x0a45aa1f0000000000000000000000000000000000000000000000000000000000000000');
+		console.log('example: node .\\scripts\\decodeWithABI.cjs MissionFactory 0a45 aa1f 0000 0000 0000...');
+		console.log('example: node .\\scripts\\decodeWithABI.cjs LazyLotto createPool <encoded>');
+		console.log('example: node .\\scripts\\decodeWithABI.cjs HederaTokenService --manual "tuple(...),address[],tuple(...)" <encoded>');
 		process.exit(1);
 	}
 
