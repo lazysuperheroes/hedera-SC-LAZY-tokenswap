@@ -17,5 +17,8 @@ old*.csv
 # Claude Code frameworks (exclude all)
 .claude/
 
+# Local dev plans
+plans/
+
 # NPM package build output
 dist/
