@@ -73,6 +73,10 @@ Hedera imposes a ~100 allowance slot limit per account (including smart contract
 | Graveyard approval | `setApprovalForAll` (per-token) | N/A |
 | Auto-association | Input tokens on config add | Manual |
 
+### Gas Estimation
+
+All scripts use `estimateGas()` from `utils/gasHelpers.cjs` which queries the mirror node, applies a 1.5x buffer (under 600K) or 1.2x buffer (over 600K), and caps at 14.5M. Fallback values are used when estimation fails (e.g., state-changing HTS operations can't be simulated read-only). The `--gas` flag on any script overrides the estimate.
+
 ## Project Conventions
 
 - **ESM project** (`"type": "module"` in package.json) but all scripts and tests use `.cjs` extension (CommonJS)

@@ -44,7 +44,7 @@ Associate output NFT tokens the contract will distribute:
 node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --add-token 0.0.OUTPUT_TOKEN_ID
 ```
 
-**Gas note:** Uses ~1,400,000 gas per token association (auto-set by script).
+Gas is auto-estimated via mirror node.
 
 ### Step 4: Stake Output NFTs into Contract
 
@@ -95,13 +95,19 @@ Load configurations:
 node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --batch-add swaps.json
 ```
 
-**Gas note:** Uses ~1,500,000 gas (auto-set). Add ~950,000 extra per new input token being associated.
+Gas is auto-estimated via mirror node. Batches of 30 configs per transaction with automatic resumability — if a batch fails, re-run the same command to continue from where it left off.
 
 ### Step 6: Verify Setup
 
 ```bash
-# Check contract info (admins, tokens, HBAR balance, pause status)
+# Check contract info (admins, tokens, HBAR balance, graveyard approvals, pause status)
 node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --info
+
+# Discover all active swap configs (no file needed)
+node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --query
+
+# Query configs from your swaps JSON (shows active vs consumed)
+node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --query-all swaps.json
 
 # Query a specific swap config
 node scripts/unified/unifiedSwap.cjs --contract 0.0.CONTRACT_ID --query --token 0.0.123456 --serial 1

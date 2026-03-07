@@ -153,7 +153,7 @@ function main() {
 	// Generate package.json
 	const packageJson = {
 		name: '@lazysuperheroes/lazy-tokenswap-contracts',
-		version: '2.1.0',
+		version: '2.1.1',
 		description: 'ABIs and TypeScript types for Lazy Token Swap smart contracts on Hedera',
 		main: 'index.js',
 		module: 'index.mjs',

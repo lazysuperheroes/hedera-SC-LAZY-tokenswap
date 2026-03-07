@@ -11,6 +11,7 @@ const { getArgFlag, getArg } = require('../../utils/nodeHelpers.cjs');
 const { initializeClient } = require('../../utils/clientFactory.cjs');
 const { readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers.cjs');
 const { checkMirrorHbarBalance } = require('../../utils/hederaMirrorHelpers.cjs');
+const { estimateGas } = require('../../utils/gasHelpers.cjs');
 
 const contractName = 'UnifiedTokenSwap';
 
@@ -34,7 +35,7 @@ Actions (choose one):
 
 Options:
   -h, --help              Show this help message
-  --gas <amount>          Gas limit (default: 200000)
+  --gas <amount>          Gas limit override (auto-estimated if not specified)
   --json                  Output result as JSON (for automation, works with --info)
 
 Environment Variables:
@@ -67,7 +68,7 @@ const main = async () => {
 	const jsonOutput = getArgFlag('json');
 	const { client, operatorId, env } = initializeClient();
 	const contractId = ContractId.fromString(contractArg);
-	const gasLimit = Number(getArg('gas')) || 200_000;
+	const userGas = Number(getArg('gas'));
 
 	if (!jsonOutput) {
 		console.log(`\n-Using Contract: ${contractId}`);
@@ -111,31 +112,37 @@ const main = async () => {
 
 	// Handle actions
 	let functionName;
+	let fnParams;
 	let params;
 	let description;
 
 	if (getArg('add-admin')) {
 		const adminId = AccountId.fromString(getArg('add-admin'));
 		functionName = 'addAdmin';
-		params = iface.encodeFunctionData(functionName, [adminId.toSolidityAddress()]);
+		fnParams = [adminId.toSolidityAddress()];
+		params = iface.encodeFunctionData(functionName, fnParams);
 		description = `Adding admin: ${adminId}`;
 	} else if (getArg('remove-admin')) {
 		const adminId = AccountId.fromString(getArg('remove-admin'));
 		functionName = 'removeAdmin';
-		params = iface.encodeFunctionData(functionName, [adminId.toSolidityAddress()]);
+		fnParams = [adminId.toSolidityAddress()];
+		params = iface.encodeFunctionData(functionName, fnParams);
 		description = `Removing admin: ${adminId}`;
 	} else if (getArg('set-graveyard')) {
 		const graveyardId = ContractId.fromString(getArg('set-graveyard'));
 		functionName = 'updateGraveyard';
-		params = iface.encodeFunctionData(functionName, [graveyardId.toSolidityAddress()]);
+		fnParams = [graveyardId.toSolidityAddress()];
+		params = iface.encodeFunctionData(functionName, fnParams);
 		description = `Setting graveyard: ${graveyardId}`;
 	} else if (getArgFlag('pause')) {
 		functionName = 'updatePauseStatus';
-		params = iface.encodeFunctionData(functionName, [true]);
+		fnParams = [true];
+		params = iface.encodeFunctionData(functionName, fnParams);
 		description = 'Pausing contract';
 	} else if (getArgFlag('unpause')) {
 		functionName = 'updatePauseStatus';
-		params = iface.encodeFunctionData(functionName, [false]);
+		fnParams = [false];
+		params = iface.encodeFunctionData(functionName, fnParams);
 		description = 'Unpausing contract';
 	} else if (getArg('fund-hbar')) {
 		const hbarAmount = Number(getArg('fund-hbar'));
@@ -185,6 +192,9 @@ const main = async () => {
 	}
 
 	console.log(`\n${description}...`);
+
+	const gasResult = await estimateGas(env, contractId, iface, operatorId, functionName, fnParams, 200_000);
+	const gasLimit = userGas || gasResult.gasLimit;
 
 	const tx = new ContractExecuteTransaction()
 		.setContractId(contractId)
