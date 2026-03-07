@@ -58,7 +58,7 @@ export declare namespace IHederaTokenServiceLite {
     }
 
   export interface IHederaTokenServiceLiteInterface extends Interface {
-    getFunction(nameOrSignature: "approveNFT" | "associateToken" | "associateTokens" | "createNonFungibleTokenWithCustomFees" | "cryptoTransfer" | "mintToken" | "transferNFT" | "transferNFTs" | "wipeTokenAccountNFT"): FunctionFragment;
+    getFunction(nameOrSignature: "approveNFT" | "associateToken" | "associateTokens" | "createNonFungibleTokenWithCustomFees" | "cryptoTransfer" | "mintToken" | "setApprovalForAll" | "transferNFT" | "transferNFTs" | "wipeTokenAccountNFT"): FunctionFragment;
 
     
 
@@ -68,6 +68,7 @@ encodeFunctionData(functionFragment: 'associateTokens', values: [AddressLike, Ad
 encodeFunctionData(functionFragment: 'createNonFungibleTokenWithCustomFees', values: [IHederaTokenServiceLite.HederaTokenStruct, IHederaTokenServiceLite.FixedFeeStruct[], IHederaTokenServiceLite.RoyaltyFeeStruct[]]): string;
 encodeFunctionData(functionFragment: 'cryptoTransfer', values: [IHederaTokenServiceLite.TransferListStruct, IHederaTokenServiceLite.TokenTransferListStruct[]]): string;
 encodeFunctionData(functionFragment: 'mintToken', values: [AddressLike, BigNumberish, BytesLike[]]): string;
+encodeFunctionData(functionFragment: 'setApprovalForAll', values: [AddressLike, AddressLike, boolean]): string;
 encodeFunctionData(functionFragment: 'transferNFT', values: [AddressLike, AddressLike, AddressLike, BigNumberish]): string;
 encodeFunctionData(functionFragment: 'transferNFTs', values: [AddressLike, AddressLike[], AddressLike[], BigNumberish[]]): string;
 encodeFunctionData(functionFragment: 'wipeTokenAccountNFT', values: [AddressLike, AddressLike, BigNumberish[]]): string;
@@ -78,6 +79,7 @@ decodeFunctionResult(functionFragment: 'associateTokens', data: BytesLike): Resu
 decodeFunctionResult(functionFragment: 'createNonFungibleTokenWithCustomFees', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'cryptoTransfer', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'mintToken', data: BytesLike): Result;
+decodeFunctionResult(functionFragment: 'setApprovalForAll', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'transferNFT', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'transferNFTs', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'wipeTokenAccountNFT', data: BytesLike): Result;
@@ -167,6 +169,14 @@ decodeFunctionResult(functionFragment: 'wipeTokenAccountNFT', data: BytesLike): 
     
 
     
+    setApprovalForAll: TypedContractMethod<
+      [token: AddressLike, operator: AddressLike, approved: boolean, ],
+      [bigint],
+      'nonpayable'
+    >
+    
+
+    
     transferNFT: TypedContractMethod<
       [token: AddressLike, sender: AddressLike, receiver: AddressLike, serialNumber: BigNumberish, ],
       [bigint],
@@ -221,6 +231,11 @@ getFunction(nameOrSignature: 'cryptoTransfer'): TypedContractMethod<
 getFunction(nameOrSignature: 'mintToken'): TypedContractMethod<
       [token: AddressLike, amount: BigNumberish, metadata: BytesLike[], ],
       [[bigint, bigint, bigint[]] & {responseCode: bigint, newTotalSupply: bigint, serialNumbers: bigint[] }],
+      'nonpayable'
+    >;
+getFunction(nameOrSignature: 'setApprovalForAll'): TypedContractMethod<
+      [token: AddressLike, operator: AddressLike, approved: boolean, ],
+      [bigint],
       'nonpayable'
     >;
 getFunction(nameOrSignature: 'transferNFT'): TypedContractMethod<

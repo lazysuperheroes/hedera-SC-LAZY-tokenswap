@@ -39,7 +39,7 @@ There are two independent contract lineages:
 
 Two different HTS precompile abstractions exist:
 - `HederaTokenService` (from Hedera SDK) - used by legacy contracts, calls `IHederaTokenService` with `int256` response codes
-- `HederaTokenServiceLite` - custom minimal wrapper used by `UnifiedTokenSwap`, calls `IHederaTokenServiceLite` with `int32` response codes, includes `cryptoTransfer(TransferList, TokenTransferList[])` for HBAR+NFT atomic transfers
+- `HederaTokenServiceLite` - custom minimal wrapper used by `UnifiedTokenSwap`, calls `IHederaTokenServiceLite` with `int32`/`int64` response codes, includes `cryptoTransfer(TransferList, TokenTransferList[])` for HBAR+NFT atomic transfers and `setApprovalForAll` for bulk NFT approval
 
 Both target the HTS precompile at `address(0x167)`.
 
@@ -48,6 +48,13 @@ Both target the HTS precompile at `address(0x167)`.
 NFTs with fallback royalty fees require an accompanying fungible transfer. The contracts include 1-tinybar HBAR transfers alongside NFT moves to satisfy this requirement at near-zero cost:
 - **Treasury flow** (3 legs): contract->user 1 tinybar + pull NFT, contract->treasury 1 tinybar + send NFT, user->contract 1 tinybar (via allowance) + send new NFT
 - **Graveyard flow**: similar but old NFT goes to Token Graveyard via `stakeNFTsToTheGrave`
+
+### Allowance Limit Handling
+
+Hedera imposes a ~100 allowance slot limit per account (including smart contracts). To avoid exhausting this:
+- **Graveyard approvals**: Contract uses `setApprovalForAll` (once per input token) instead of per-serial `approveNFT`. Tracked via `graveyardApprovals` mapping and `graveyardApprovalCount` counter. `getGraveyardApprovalCount()` exposes current usage.
+- **User NFT allowances**: Scripts use `approveTokenNftAllowanceAllSerials` instead of per-serial allowances.
+- **Staking allowances**: `stakeNFTs.cjs` uses `approveTokenNftAllowanceAllSerials` for the same reason.
 
 ### Swap Config Storage
 
@@ -63,6 +70,7 @@ NFTs with fallback royalty fees require an accompanying fungible transfer. The c
 | Royalty defeat | HBAR tinybar | LAZY tinybar (Fallback) or none |
 | Graveyard | Optional per-config | Not supported |
 | LAZY rewards | Not supported | Via LazyGasStation |
+| Graveyard approval | `setApprovalForAll` (per-token) | N/A |
 | Auto-association | Input tokens on config add | Manual |
 
 ## Project Conventions

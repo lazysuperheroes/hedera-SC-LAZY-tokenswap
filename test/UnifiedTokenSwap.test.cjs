@@ -1203,6 +1203,22 @@ describe('Admin Utilities: ', function () {
 		const newGraveyard = utsIface.decodeFunctionResult('graveyard', result2)[0];
 		expect(newGraveyard.toLowerCase()).to.equal(currentGraveyard.toLowerCase());
 	});
+
+	it('Should check getGraveyardApprovalCount view function', async function () {
+		if (!graveyardSwapTestable) {
+			this.skip();
+			return;
+		}
+
+		// Query the count via mirror node
+		const encodedFunction = utsIface.encodeFunctionData('getGraveyardApprovalCount');
+		const result = await readOnlyEVMFromMirrorNode(env, contractId, encodedFunction, operatorId, false);
+		const count = utsIface.decodeFunctionResult('getGraveyardApprovalCount', result)[0];
+
+		// Should have at least 1 from the graveyard swap test
+		expect(Number(count)).to.be.greaterThan(0);
+		console.log(`Graveyard approval count: ${count}`);
+	});
 });
 
 describe('Cleanup: ', function () {

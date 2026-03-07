@@ -112,6 +112,24 @@ const main = async () => {
 		console.warn('Proceeding without pre-flight check...\n');
 	}
 
+	// Check graveyard approval count for graveyard-mode warnings
+	async function checkGraveyardCapacity() {
+		try {
+			const countData = iface.encodeFunctionData('getGraveyardApprovalCount', []);
+			const countResult = await readOnlyEVMFromMirrorNode(env, contractId, countData, operatorId, false);
+			const count = Number(iface.decodeFunctionResult('getGraveyardApprovalCount', countResult)[0]);
+			if (count >= 90) {
+				console.warn(`\nWARNING: Graveyard has ${count}/~100 token approvals used.`);
+				console.warn('Hedera limits accounts to ~100 allowance slots.');
+				console.warn('New graveyard-mode input tokens may fail if the limit is reached.\n');
+			} else {
+				console.log(`\nGraveyard approval slots used: ${count}/~100`);
+			}
+		} catch {
+			// Older contract or mirror node issue - skip silently
+		}
+	}
+
 	let functionName;
 	let params;
 	let description;
@@ -165,6 +183,10 @@ const main = async () => {
 		]);
 		description = `Adding swap: ${inputToken}#${inputSerial} -> ${outputToken}#${outputSerial}`;
 		gasLimit = userGas || 1_500_000; // May need HTS association for new input token
+
+		if (useGraveyard) {
+			await checkGraveyardCapacity();
+		}
 	} else if (getArgFlag('remove-swap')) {
 		const inputTokenArg = getArg('input-token');
 		const inputSerialArg = getArg('input-serial');
@@ -209,6 +231,11 @@ const main = async () => {
 		params = iface.encodeFunctionData(functionName, [inputTokens, inputSerials, configs]);
 		description = `Batch adding ${swaps.length} swap configurations`;
 		gasLimit = userGas || 1_500_000; // May need HTS association for new input tokens
+
+		const hasGraveyard = swaps.some(s => s.useGraveyard);
+		if (hasGraveyard) {
+			await checkGraveyardCapacity();
+		}
 	} else {
 		console.error('ERROR: No action specified');
 		showHelp();

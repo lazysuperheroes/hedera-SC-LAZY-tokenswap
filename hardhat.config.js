@@ -6,7 +6,7 @@ const config = {
 	plugins: [hardhatToolbox, hardhatContractSizer],
 	contractSizer: {
 		alphaSort: true,
-		runOnCompile: false,
+		runOnCompile: true,
 		disambiguatePaths: false,
 	},
 	solidity: {

@@ -153,7 +153,7 @@ function main() {
 	// Generate package.json
 	const packageJson = {
 		name: '@lazysuperheroes/lazy-tokenswap-contracts',
-		version: '2.0.0',
+		version: '2.1.0',
 		description: 'ABIs and TypeScript types for Lazy Token Swap smart contracts on Hedera',
 		main: 'index.js',
 		module: 'index.mjs',
@@ -247,8 +247,10 @@ import { UnifiedTokenSwap } from '@lazysuperheroes/lazy-tokenswap-contracts/type
 Before calling \`swapNFTs\`, users need:
 
 1. **Output token association** - Associate the new NFT token with their account
-2. **NFT allowance** - Grant the contract permission to transfer their old NFT
+2. **NFT allowance** - Grant the contract \`approveTokenNftAllowanceAllSerials\` (avoids Hedera's 100-allowance limit)
 3. **HBAR allowance** - Grant 1 tinybar per swap to the contract (for royalty defeat, net cost = 0)
+
+> **Note:** Hedera limits accounts to ~100 allowance slots. The contract uses \`setApprovalForAll\` for graveyard approvals (once per token, not per serial) to stay within this limit. Use \`getGraveyardApprovalCount()\` to monitor usage.
 
 ## Links
 

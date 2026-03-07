@@ -118,7 +118,7 @@ node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --unpause
 Before users can swap, they need:
 
 1. **Output token association** - Associate the new NFT token with their account
-2. **NFT allowance to contract** - Grant the contract permission to transfer their old NFT
+2. **NFT allowance to contract** - Grant the contract permission to transfer their old NFT (uses `approveTokenNftAllowanceAllSerials` to avoid Hedera's 100-allowance limit)
 3. **HBAR allowance to contract** - Grant 1 tinybar allowance per swap (net cost = 0)
 
 ```javascript
@@ -129,7 +129,7 @@ await new TokenAssociateTransaction()
   .setTokenIds([outputTokenId])
   .execute(client);
 
-// 2. Grant NFT allowance
+// 2. Grant NFT allowance (all serials - avoids 100-allowance limit)
 await new AccountAllowanceApproveTransaction()
   .approveTokenNftAllowanceAllSerials(inputTokenId, userAccountId, contractAccountId)
   .execute(client);
@@ -139,6 +139,16 @@ await new AccountAllowanceApproveTransaction()
   .approveHbarAllowance(userAccountId, contractAccountId, Hbar.fromTinybars(100))
   .execute(client);
 ```
+
+### Allowance Limit Note
+
+Hedera imposes a ~100 allowance slot limit per account. The contract uses `setApprovalForAll` (once per token) for graveyard approvals instead of per-serial `approveNFT` to stay within this limit. Monitor usage with:
+
+```bash
+node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --info
+```
+
+The `--info` output shows the graveyard approval count and warns when approaching the limit.
 
 ---
 

@@ -14,8 +14,10 @@ Universal NFT swap contract with:
 - **Admin recovery**: `unstakeNFTs` function allows admins to recover stuck NFTs (receiver needs HBAR allowance)
 
 **User Requirements:**
-- NFT allowance to contract (for old NFT transfer)
+- NFT allowance to contract (use `approveTokenNftAllowanceAllSerials` to avoid Hedera's 100-allowance limit)
 - HBAR allowance to contract (1 tinybar per swap, net cost = 0)
+
+**Hedera Allowance Limit:** Hedera imposes ~100 allowance slots per account (including contracts). The contract uses `setApprovalForAll` for graveyard approvals (once per token, not per serial) and scripts use `approveTokenNftAllowanceAllSerials` for user/staking allowances. Monitor graveyard usage via `getGraveyardApprovalCount()` or `adminManagement.cjs --info`.
 
 ### NoFallbackTokenSwap (Legacy)
 Simpler swap contract for LAZY ecosystem projects:

@@ -90,6 +90,12 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
     /// @notice Whether the contract is paused
     bool public paused;
 
+    /// @notice Tracks which tokens have been approved for graveyard (to avoid 100 allowance limit)
+    mapping(address => bool) private graveyardApprovals;
+
+    /// @notice Counter for number of unique tokens approved for graveyard
+    uint256 private graveyardApprovalCount;
+
     // ============================================
     // EVENTS
     // ============================================
@@ -326,6 +332,13 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
         return inputTokens.contains(_token) || outputTokens.contains(_token);
     }
 
+    /// @notice Returns the number of unique tokens approved for the graveyard
+    /// @dev Helps monitor if approaching any smart contract allowance limits
+    /// @return The count of tokens that have been approved via setApprovalForAll for graveyard
+    function getGraveyardApprovalCount() external view returns (uint256) {
+        return graveyardApprovalCount;
+    }
+
     // ============================================
     // SWAP CONFIGURATION
     // ============================================
@@ -517,6 +530,7 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
 
     /// @notice Processes a swap with graveyard destination
     /// @dev Two-step: pull NFT to contract, then stake to graveyard via interface
+    ///      Uses setApprovalForAll to avoid Hedera's 100 allowance limit
     function _processGraveyardSwap(
         address inputToken,
         uint256 inputSerial,
@@ -530,19 +544,25 @@ contract UnifiedTokenSwap is HederaTokenServiceLite, ReentrancyGuard {
         uint256[] memory serials = new uint256[](1);
         serials[0] = inputSerial;
 
-        // Graveyard will pull via allowance that we set
-        int256 approvalResponse = approveNFT(
-            inputToken,
-            address(graveyard),
-            inputSerial
-        );
-
-        if (approvalResponse != HederaResponseCodes.SUCCESS) {
-            revert NFTApprovalFailed(
+        // Set approval for all serials if not already done (once per token)
+        // This avoids Hedera's 100 allowance limit when swapping many NFTs
+        if (!graveyardApprovals[inputToken]) {
+            int256 approvalResponse = setApprovalForAll(
                 inputToken,
-                inputSerial,
-                address(graveyard)
+                address(graveyard),
+                true
             );
+
+            if (approvalResponse != HederaResponseCodes.SUCCESS) {
+                revert NFTApprovalFailed(
+                    inputToken,
+                    0, // Use 0 for serial since this is an all-serials approval
+                    address(graveyard)
+                );
+            }
+
+            graveyardApprovals[inputToken] = true;
+            graveyardApprovalCount++;
         }
 
         // Step 2: Stake to graveyard contract

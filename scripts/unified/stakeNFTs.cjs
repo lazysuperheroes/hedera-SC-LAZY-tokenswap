@@ -123,17 +123,15 @@ const main = async () => {
 
 	// Set NFT allowances if not skipped
 	if (!getArgFlag('skip-allowance')) {
-		if (!jsonOutput) console.log('\nSetting NFT allowances...');
+		if (!jsonOutput) console.log('\nSetting NFT allowance for all serials...');
 
-		for (const serial of serials) {
-			const nftId = new NftId(tokenId, serial);
-			const allowanceTx = new AccountAllowanceApproveTransaction()
-				.approveTokenNftAllowance(nftId, operatorId, contractId);
+		// Use approveTokenNftAllowanceAllSerials to avoid Hedera's 100 allowance limit
+		const allowanceTx = new AccountAllowanceApproveTransaction()
+			.approveTokenNftAllowanceAllSerials(tokenId, operatorId, contractId);
 
-			const allowanceResponse = await allowanceTx.execute(client);
-			const allowanceReceipt = await allowanceResponse.getReceipt(client);
-			if (!jsonOutput) console.log(`  Serial #${serial}: ${allowanceReceipt.status}`);
-		}
+		const allowanceResponse = await allowanceTx.execute(client);
+		const allowanceReceipt = await allowanceResponse.getReceipt(client);
+		if (!jsonOutput) console.log(`  Approved all serials: ${allowanceReceipt.status}`);
 	}
 
 	// Split serials into batches of MAX_NFTS_PER_TX

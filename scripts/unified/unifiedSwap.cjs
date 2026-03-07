@@ -220,18 +220,16 @@ const main = async () => {
 
 	// Set allowances if not skipped
 	if (!getArgFlag('skip-allowance')) {
-		// Set NFT allowances
-		if (!jsonOutput) console.log('\nSetting NFT allowances...');
+		// Set NFT allowance for all serials
+		if (!jsonOutput) console.log('\nSetting NFT allowance for all serials...');
 
-		for (const serial of serials) {
-			const nftId = new NftId(tokenId, serial);
-			const allowanceTx = new AccountAllowanceApproveTransaction()
-				.approveTokenNftAllowance(nftId, operatorId, contractId);
+		// Use approveTokenNftAllowanceAllSerials to avoid Hedera's 100 allowance limit
+		const allowanceTx = new AccountAllowanceApproveTransaction()
+			.approveTokenNftAllowanceAllSerials(tokenId, operatorId, contractId);
 
-			const allowanceResponse = await allowanceTx.execute(client);
-			const allowanceReceipt = await allowanceResponse.getReceipt(client);
-			if (!jsonOutput) console.log(`  Serial #${serial}: ${allowanceReceipt.status}`);
-		}
+		const allowanceResponse = await allowanceTx.execute(client);
+		const allowanceReceipt = await allowanceResponse.getReceipt(client);
+		if (!jsonOutput) console.log(`  Approved all serials: ${allowanceReceipt.status}`);
 
 		// Set HBAR allowance (1 tinybar per swap for royalty defeat)
 		if (!jsonOutput) console.log('\nChecking HBAR allowance...');

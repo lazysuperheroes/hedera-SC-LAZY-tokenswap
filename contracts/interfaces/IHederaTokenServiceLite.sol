@@ -186,4 +186,17 @@ interface IHederaTokenServiceLite {
         address account,
         int64[] memory serialNumbers
     ) external returns (int32 responseCode);
+
+    /// Enable or disable approval for a third party ("operator") to manage
+    /// all of `msg.sender`'s assets
+    /// Only Applicable to NFT Tokens
+    /// @param token The Hedera NFT token address to approve
+    /// @param operator Address to add to the set of authorized operators
+    /// @param approved True if the operator is approved, false to revoke approval
+    /// @return responseCode The response code for the status of the request. SUCCESS is 22.
+    function setApprovalForAll(
+        address token,
+        address operator,
+        bool approved
+    ) external returns (int64 responseCode);
 }

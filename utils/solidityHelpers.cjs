@@ -41,17 +41,20 @@ function parseError(ifaceOrArray, errorData) {
 		return 'UNKNOWN ERROR: No error data provided';
 	}
 
-	if (errorData.startsWith('0x08c379a0')) {
+	// Ensure errorData is a string
+	const errorString = typeof errorData === 'string' ? errorData : String(errorData);
+
+	if (errorString.startsWith('0x08c379a0')) {
 		// decode Error(string)
 
-		const content = `0x${errorData.substring(10)}`;
+		const content = `0x${errorString.substring(10)}`;
 		return `REVERT: ${ethers.AbiCoder.defaultAbiCoder().decode(['string'], content)}`;
 		// reason: string; for standard revert error string
 	}
 
-	if (errorData.startsWith('0x4e487b71')) {
+	if (errorString.startsWith('0x4e487b71')) {
 		// decode Panic(uint)
-		const content = `0x${errorData.substring(10)}`;
+		const content = `0x${errorString.substring(10)}`;
 		const code = ethers.AbiCoder.defaultAbiCoder().decode(['uint'], content);
 
 		let type;
@@ -98,7 +101,7 @@ function parseError(ifaceOrArray, errorData) {
 
 	for (const iface of interfaces) {
 		try {
-			const errDescription = iface.parseError(errorData);
+			const errDescription = iface.parseError(errorString);
 			if (errDescription) {
 				// Format the error nicely with contract name if available
 				const errorName = errDescription.name;
@@ -130,8 +133,8 @@ function parseError(ifaceOrArray, errorData) {
 	}
 
 	// If no interface could parse it, return unknown error
-	console.error('Could not decode error with any provided interface:', errorData);
-	return `UNKNOWN ERROR: ${errorData}`;
+	console.error('Could not decode error with any provided interface:', errorString);
+	return `UNKNOWN ERROR: ${errorString}`;
 }
 
 /**

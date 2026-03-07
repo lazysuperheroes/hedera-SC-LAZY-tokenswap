@@ -92,7 +92,7 @@ const main = async () => {
 			const isAdmin = iface.decodeFunctionResult('isAdmin', adminCheckResult)[0];
 			if (!isAdmin) {
 				console.error(`\nERROR: Operator ${operatorId} is not an admin of contract ${contractId}\n`);
-				console.error(`Current admins can be checked with:`);
+				console.error('Current admins can be checked with:');
 				console.error(`  node adminManagement.cjs --contract ${contractId} --info\n`);
 				process.exit(1);
 			}
@@ -146,24 +146,34 @@ const main = async () => {
 
 		console.log(`\nSending ${hbarAmount} HBAR to contract ${contractId}...`);
 
-		const transferTx = new TransferTransaction()
-			.addHbarTransfer(operatorId, Hbar.from(-hbarAmount))
-			.addHbarTransfer(contractId, Hbar.from(hbarAmount));
+		try {
+			const transferTx = new TransferTransaction()
+				.addHbarTransfer(operatorId.toString(), Hbar.from(-hbarAmount))
+				.addHbarTransfer(contractId.toString(), Hbar.from(hbarAmount));
 
-		const txResponse = await transferTx.execute(client);
-		const receipt = await txResponse.getReceipt(client);
+			const txResponse = await transferTx.execute(client);
+			const receipt = await txResponse.getReceipt(client);
 
-		if (jsonOutput) {
-			console.log(JSON.stringify({
-				success: receipt.status.toString() === 'SUCCESS',
-				action: 'fund-hbar',
-				contract: contractId.toString(),
-				amount: hbarAmount,
-				status: receipt.status.toString(),
-			}));
-		} else {
-			console.log(`Status: ${receipt.status}`);
-			console.log(`Transaction ID: ${txResponse.transactionId}`);
+			if (jsonOutput) {
+				console.log(JSON.stringify({
+					success: receipt.status.toString() === 'SUCCESS',
+					action: 'fund-hbar',
+					contract: contractId.toString(),
+					amount: hbarAmount,
+					status: receipt.status.toString(),
+				}));
+			} else {
+				console.log(`Status: ${receipt.status}`);
+				console.log(`Transaction ID: ${txResponse.transactionId}`);
+			}
+		} catch (error) {
+			console.error('\nERROR during HBAR transfer:');
+			console.error('Error type:', typeof error);
+			console.error('Error:', error);
+			if (error.stack) {
+				console.error('Stack trace:', error.stack);
+			}
+			process.exit(1);
 		}
 
 		client.close();
@@ -224,12 +234,23 @@ async function showContractInfo(env, contractId, operatorId, iface, jsonOutput =
 		// Mirror node query failed, balance unknown
 	}
 
+	// Get graveyard approval count
+	let graveyardApprovalCount = null;
+	try {
+		encodedCommand = iface.encodeFunctionData('getGraveyardApprovalCount', []);
+		result = await readOnlyEVMFromMirrorNode(env, contractId, encodedCommand, operatorId, false);
+		graveyardApprovalCount = Number(iface.decodeFunctionResult('getGraveyardApprovalCount', result)[0]);
+	} catch {
+		// May not be available on older contract versions
+	}
+
 	if (jsonOutput) {
 		console.log(JSON.stringify({
 			contract: contractId.toString(),
 			admins: adminList,
 			paused,
 			graveyard: graveyardId,
+			graveyardApprovalCount: graveyardApprovalCount !== null ? graveyardApprovalCount : 'unknown',
 			outputTokens: outputTokenList,
 			hbarBalance: hbarBalance !== null ? hbarBalance : 'unknown',
 		}));
@@ -245,6 +266,12 @@ async function showContractInfo(env, contractId, operatorId, iface, jsonOutput =
 
 		if (graveyardId) {
 			console.log(`Graveyard: ${graveyardId}`);
+			if (graveyardApprovalCount !== null) {
+				console.log(`Graveyard Approvals: ${graveyardApprovalCount} token(s) approved`);
+				if (graveyardApprovalCount >= 90) {
+					console.log('  WARNING: Approaching Hedera 100-allowance limit!');
+				}
+			}
 		} else {
 			console.log('Graveyard: Not configured');
 		}
