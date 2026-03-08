@@ -22,3 +22,5 @@ plans/
 
 # NPM package build output
 dist/
+
+swap*.json
