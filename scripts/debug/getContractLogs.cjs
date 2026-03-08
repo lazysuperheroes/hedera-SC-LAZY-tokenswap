@@ -27,7 +27,7 @@ async function main() {
 
 	const args = process.argv.slice(2);
 	if (args.length != 2 || getArgFlag('h')) {
-		console.log('Usage: getContractLogs.js 0.0.SSS <contract name>');
+		console.log('Usage: getContractLogs.cjs 0.0.SSS <contract name>');
 		console.log('       SSS is the Smart Contract address');
 		console.log('       contract name is the name of the contract');
 		return;

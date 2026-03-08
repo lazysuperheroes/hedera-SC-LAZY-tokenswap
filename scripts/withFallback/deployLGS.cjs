@@ -13,7 +13,7 @@ const lazyGasStationName = 'LazyGasStation';
 
 function showHelp() {
 	console.log(`
-Usage: node deployLGS.js
+Usage: node deployLGS.cjs
 
 Deploy a new LazyGasStation contract.
 
@@ -28,7 +28,7 @@ Options:
 
 Example:
   # Set environment variables in .env, then run:
-  node deployLGS.js
+  node deployLGS.cjs
 `);
 }
 

@@ -4,7 +4,7 @@ const { getArgFlag } = require('../utils/nodeHelpers.cjs');
 
 function showHelp() {
 	console.log(`
-Usage: node verify-setup.js [options]
+Usage: node verify-setup.cjs [options]
 
 Pre-flight check to verify your environment is properly configured for running
 Hedera Token Swap scripts.
@@ -20,8 +20,8 @@ Checks performed:
   - Node.js version compatibility
 
 Example:
-  node verify-setup.js
-  node verify-setup.js --verbose
+  node verify-setup.cjs
+  node verify-setup.cjs --verbose
 `);
 }
 
@@ -32,14 +32,17 @@ const REQUIRED_ENV_VARS = [
 ];
 
 const OPTIONAL_ENV_VARS = [
-	{ name: 'TOKEN_SWAP_CONTRACT_ID', description: 'NoFallbackTokenSwap contract ID' },
-	{ name: 'FALLBACK_TOKEN_SWAP_CONTRACT_ID', description: 'FallbackTokenSwap contract ID' },
-	{ name: 'LAZY_GAS_STATION_CONTRACT_ID', description: 'LazyGasStation contract ID' },
+	{ name: 'UNIFIED_TOKEN_SWAP_CONTRACT_ID', description: 'UnifiedTokenSwap contract ID (recommended)' },
+	{ name: 'TOKEN_GRAVEYARD_CONTRACT_ID', description: 'Token Graveyard contract ID (for graveyard flow)' },
+	{ name: 'TOKEN_SWAP_CONTRACT_ID', description: 'NoFallbackTokenSwap contract ID (legacy)' },
+	{ name: 'FALLBACK_TOKEN_SWAP_CONTRACT_ID', description: 'FallbackTokenSwap contract ID (legacy)' },
+	{ name: 'LAZY_GAS_STATION_CONTRACT_ID', description: 'LazyGasStation contract ID (legacy)' },
 	{ name: 'LAZY_TOKEN_ID', description: 'LAZY token ID' },
 	{ name: 'SWAP_TOKEN_ID', description: 'Token being swapped for LAZY' },
 ];
 
 const REQUIRED_ARTIFACTS = [
+	'UnifiedTokenSwap',
 	'NoFallbackTokenSwap',
 	'FallbackTokenSwap',
 	'LazyGasStation',

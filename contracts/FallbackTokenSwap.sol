@@ -115,7 +115,7 @@ contract FallbackTokenSwap is BaseTokenSwap {
     function swapNFTs(
         address[] calldata tokensToSwap,
         uint256[] calldata serials
-    ) external returns (uint256 amt) {
+    ) external nonReentrant returns (uint256 amt) {
         if (serials.length > type(uint8).max) revert ExceedsMaxSerials();
         if (tokensToSwap.length != serials.length) revert BadInput();
         if (paused) revert ContractPaused();
@@ -316,7 +316,7 @@ contract FallbackTokenSwap is BaseTokenSwap {
     /// @notice Stakes NFTs from user to contract for swap distribution
     /// @dev Used when NFTs are held outside treasury and need to be loaded into contract
     /// @param _serials Array of serial numbers to stake
-    function stakeNFTs(uint256[] calldata _serials) external {
+    function stakeNFTs(uint256[] calldata _serials) external nonReentrant {
         if (IERC20(lazyToken).balanceOf(address(this)) < 20) {
             lazyGasStation.refillLazy(50);
         }

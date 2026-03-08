@@ -79,9 +79,10 @@ function loadOperator() {
  * @param {string} env - Environment: TEST, MAIN, PREVIEW, or LOCAL
  * @param {AccountId} operatorId - Operator account ID
  * @param {PrivateKey} operatorKey - Operator private key
+ * @param {boolean} [quiet=false] - Suppress console output
  * @returns {Client} Configured Hedera client
  */
-function createClient(env, operatorId, operatorKey) {
+function createClient(env, operatorId, operatorKey, quiet = false) {
 	const envUpper = (env || 'TEST').toUpperCase();
 	let client;
 
@@ -89,23 +90,23 @@ function createClient(env, operatorId, operatorKey) {
 	case 'TEST':
 	case 'TESTNET':
 		client = Client.forTestnet();
-		console.log('Operating in *TESTNET*');
+		if (!quiet) console.log('Operating in *TESTNET*');
 		break;
 	case 'MAIN':
 	case 'MAINNET':
 		client = Client.forMainnet();
-		console.log('Operating in *MAINNET*');
+		if (!quiet) console.log('Operating in *MAINNET*');
 		break;
 	case 'PREVIEW':
 	case 'PREVIEWNET':
 		client = Client.forPreviewnet();
-		console.log('Operating in *PREVIEWNET*');
+		if (!quiet) console.log('Operating in *PREVIEWNET*');
 		break;
 	case 'LOCAL':
 		// eslint-disable-next-line no-case-declarations
 		const node = { '127.0.0.1:50211': new AccountId(3) };
 		client = Client.forNetwork(node).setMirrorNetwork('127.0.0.1:5600');
-		console.log('Operating in *LOCAL*');
+		if (!quiet) console.log('Operating in *LOCAL*');
 		break;
 	default:
 		console.error(`ERROR: Invalid environment "${env}"`);
@@ -121,19 +122,25 @@ function createClient(env, operatorId, operatorKey) {
  * Initialize Hedera client with operator credentials from environment
  * This is the main convenience function - use this in most scripts
  *
+ * @param {Object} [options={}] - Configuration options
+ * @param {boolean} [options.quiet=false] - Suppress console output
  * @returns {{ client: Client, operatorId: AccountId, operatorKey: PrivateKey, env: string }}
  *
  * @example
  * const { initializeClient } = require('./utils/clientFactory.cjs');
  * const { client, operatorId, operatorKey, env } = initializeClient();
+ * // Or suppress output:
+ * const { client } = initializeClient({ quiet: true });
  */
-function initializeClient() {
+function initializeClient(options = {}) {
 	const env = process.env.ENVIRONMENT || 'TEST';
 	const { operatorId, operatorKey } = loadOperator();
-	const client = createClient(env, operatorId, operatorKey);
+	const client = createClient(env, operatorId, operatorKey, options.quiet);
 
-	console.log('-Using Operator:', operatorId.toString());
-	console.log('-Using Environment:', env.toUpperCase());
+	if (!options.quiet) {
+		console.log('-Using Operator:', operatorId.toString());
+		console.log('-Using Environment:', env.toUpperCase());
+	}
 
 	return { client, operatorId, operatorKey, env };
 }

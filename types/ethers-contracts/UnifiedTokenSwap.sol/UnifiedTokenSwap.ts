@@ -13,7 +13,7 @@ export declare namespace UnifiedTokenSwap {
     }
 
   export interface UnifiedTokenSwapInterface extends Interface {
-    getFunction(nameOrSignature: "addAdmin" | "addOutputToken" | "addSwapConfigs" | "getAdmins" | "getInputTokens" | "getOutputTokens" | "getSwapConfigs" | "graveyard" | "isAdmin" | "isTokenAssociated" | "paused" | "removeAdmin" | "removeSwapConfigs" | "stakeNFTs" | "swapConfigs" | "swapNFTs" | "transferHbar" | "unstakeNFTs" | "updateGraveyard" | "updatePauseStatus"): FunctionFragment;
+    getFunction(nameOrSignature: "addAdmin" | "addOutputToken" | "addSwapConfigs" | "getAdmins" | "getGraveyardApprovalCount" | "getInputTokens" | "getOutputTokens" | "getSwapConfigs" | "graveyard" | "isAdmin" | "isTokenAssociated" | "paused" | "removeAdmin" | "removeSwapConfigs" | "stakeNFTs" | "swapConfigs" | "swapNFTs" | "transferHbar" | "unstakeNFTs" | "updateGraveyard" | "updatePauseStatus"): FunctionFragment;
 
     getEvent(nameOrSignatureOrTopic: "AdminChanged" | "SwapEvent"): EventFragment;
 
@@ -21,6 +21,7 @@ export declare namespace UnifiedTokenSwap {
 encodeFunctionData(functionFragment: 'addOutputToken', values: [AddressLike]): string;
 encodeFunctionData(functionFragment: 'addSwapConfigs', values: [AddressLike[], BigNumberish[], UnifiedTokenSwap.SwapConfigStruct[]]): string;
 encodeFunctionData(functionFragment: 'getAdmins', values?: undefined): string;
+encodeFunctionData(functionFragment: 'getGraveyardApprovalCount', values?: undefined): string;
 encodeFunctionData(functionFragment: 'getInputTokens', values?: undefined): string;
 encodeFunctionData(functionFragment: 'getOutputTokens', values?: undefined): string;
 encodeFunctionData(functionFragment: 'getSwapConfigs', values: [AddressLike[], BigNumberish[]]): string;
@@ -42,6 +43,7 @@ encodeFunctionData(functionFragment: 'updatePauseStatus', values: [boolean]): st
 decodeFunctionResult(functionFragment: 'addOutputToken', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'addSwapConfigs', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'getAdmins', data: BytesLike): Result;
+decodeFunctionResult(functionFragment: 'getGraveyardApprovalCount', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'getInputTokens', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'getOutputTokens', data: BytesLike): Result;
 decodeFunctionResult(functionFragment: 'getSwapConfigs', data: BytesLike): Result;
@@ -146,6 +148,14 @@ decodeFunctionResult(functionFragment: 'updatePauseStatus', data: BytesLike): Re
     getAdmins: TypedContractMethod<
       [],
       [string[]],
+      'view'
+    >
+    
+
+    
+    getGraveyardApprovalCount: TypedContractMethod<
+      [],
+      [bigint],
       'view'
     >
     
@@ -299,6 +309,11 @@ getFunction(nameOrSignature: 'addSwapConfigs'): TypedContractMethod<
 getFunction(nameOrSignature: 'getAdmins'): TypedContractMethod<
       [],
       [string[]],
+      'view'
+    >;
+getFunction(nameOrSignature: 'getGraveyardApprovalCount'): TypedContractMethod<
+      [],
+      [bigint],
       'view'
     >;
 getFunction(nameOrSignature: 'getInputTokens'): TypedContractMethod<

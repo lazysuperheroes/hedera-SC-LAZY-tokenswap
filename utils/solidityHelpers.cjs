@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const { ContractCallQuery, Client, TransactionRecordQuery, ContractExecuteTransaction, ContractCreateFlow } = require('@hashgraph/sdk');
 const { getBaseURL } = require('./hederaMirrorHelpers.cjs');
 const { formatTransactionAnalysis } = require('./transactionHelpers.cjs');
+const { sleep } = require('./nodeHelpers.cjs');
 dotenv.config();
 
 const SLEEP_TIME = process.env.SLEEP_TIME ?? 5000;
@@ -40,17 +41,20 @@ function parseError(ifaceOrArray, errorData) {
 		return 'UNKNOWN ERROR: No error data provided';
 	}
 
-	if (errorData.startsWith('0x08c379a0')) {
+	// Ensure errorData is a string
+	const errorString = typeof errorData === 'string' ? errorData : String(errorData);
+
+	if (errorString.startsWith('0x08c379a0')) {
 		// decode Error(string)
 
-		const content = `0x${errorData.substring(10)}`;
+		const content = `0x${errorString.substring(10)}`;
 		return `REVERT: ${ethers.AbiCoder.defaultAbiCoder().decode(['string'], content)}`;
 		// reason: string; for standard revert error string
 	}
 
-	if (errorData.startsWith('0x4e487b71')) {
+	if (errorString.startsWith('0x4e487b71')) {
 		// decode Panic(uint)
-		const content = `0x${errorData.substring(10)}`;
+		const content = `0x${errorString.substring(10)}`;
 		const code = ethers.AbiCoder.defaultAbiCoder().decode(['uint'], content);
 
 		let type;
@@ -97,7 +101,7 @@ function parseError(ifaceOrArray, errorData) {
 
 	for (const iface of interfaces) {
 		try {
-			const errDescription = iface.parseError(errorData);
+			const errDescription = iface.parseError(errorString);
 			if (errDescription) {
 				// Format the error nicely with contract name if available
 				const errorName = errDescription.name;
@@ -129,8 +133,8 @@ function parseError(ifaceOrArray, errorData) {
 	}
 
 	// If no interface could parse it, return unknown error
-	console.error('Could not decode error with any provided interface:', errorData);
-	return `UNKNOWN ERROR: ${errorData}`;
+	console.error('Could not decode error with any provided interface:', errorString);
+	return `UNKNOWN ERROR: ${errorString}`;
 }
 
 /**
@@ -179,8 +183,6 @@ async function parseErrorTransactionId(envOrClient, transactionId, ifaceOrArray)
 	// take tx Id in format 0.0.XXXX@11111.11111 and convert to 0.0.XXXX-11111-11111
 	const webFormatTxId = transactionId.accountId.toString() + '-' + transactionId.validStart.toString().substring(0, 10) + '-' + transactionId.validStart.toString().substring(11, 21);
 	url += `/api/v1/contracts/results/${webFormatTxId}`;
-
-	// console.log(' -Calling mirror node for transaction:', transactionId.toString(), url);
 
 	const response = await axios.get(url);
 	if (response.status != 200) {
@@ -350,7 +352,6 @@ async function contractExecuteFunction(contractId, iface, client, gasLim, fcnNam
 			console.log(parseError(iface, record.contractFunctionResult.bytes));
 		}
 	}
-	// console.log('Contract Results:', contractResults);
 	return [contractExecuteRx, contractResults, record];
 }
 
@@ -405,19 +406,11 @@ async function contractDeployFunction(client, bytecode, gasLim = 800_000, params
 	return [contractId, contractAddress];
 }
 
-// sleep function
-function sleep(ms) {
-	return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 module.exports = {
 	parseError,
 	parseErrorTransactionId,
 	contractExecuteQuery,
 	contractExecuteFunction,
-	useSetter,
 	readOnlyEVMFromMirrorNode,
-	linkBytecode,
 	contractDeployFunction,
-	getBaseURL,
 };

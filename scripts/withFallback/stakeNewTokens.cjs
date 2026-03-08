@@ -15,7 +15,7 @@ const contractName = 'FallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node stakeNewTokens.js <contract-id> <serials>
+Usage: node stakeNewTokens.cjs <contract-id> <serials>
 
 Stake NFTs to a FallbackTokenSwap contract for future swaps.
 
@@ -27,7 +27,7 @@ Options:
   -h, --help      Show this help message
 
 Example:
-  node stakeNewTokens.js 0.0.123456 1,2,3,4,5
+  node stakeNewTokens.cjs 0.0.123456 1,2,3,4,5
 `);
 }
 

@@ -7,8 +7,6 @@ import type * as iHederaTokenServiceSol from './IHederaTokenService.sol/index.js
 export type { iHederaTokenServiceSol };
 import type * as iHederaTokenServiceLiteSol from './IHederaTokenServiceLite.sol/index.js';
 export type { iHederaTokenServiceLiteSol };
-import type * as iLazyDelegateRegistrySol from './ILazyDelegateRegistry.sol/index.js';
-export type { iLazyDelegateRegistrySol };
 import type * as iLazyGasStationSol from './ILazyGasStation.sol/index.js';
 export type { iLazyGasStationSol };
 import type * as iRolesSol from './IRoles.sol/index.js';

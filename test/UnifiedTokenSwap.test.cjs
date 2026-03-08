@@ -119,13 +119,13 @@ describe('Deployment: ', function () {
 		// Create Alice account
 		alicePK = PrivateKey.generateED25519();
 		aliceId = await accountCreator(client, alicePK, 150);
-		console.log('Alice account ID:', aliceId.toString(), '\nkey:', alicePK.toString());
+		console.log('Alice account ID:', aliceId.toString());
 		expect(aliceId.toString().match(addressRegex).length == 2).to.be.true;
 
 		// Create Bob account
 		bobPK = PrivateKey.generateED25519();
 		bobId = await accountCreator(client, bobPK, 100);
-		console.log('Bob account ID:', bobId.toString(), '\nkey:', bobPK.toString());
+		console.log('Bob account ID:', bobId.toString());
 		expect(bobId.toString().match(addressRegex).length == 2).to.be.true;
 
 		// Mint NFT collections
@@ -1202,6 +1202,22 @@ describe('Admin Utilities: ', function () {
 		const result2 = await readOnlyEVMFromMirrorNode(env, contractId, encodedFunction, operatorId, false);
 		const newGraveyard = utsIface.decodeFunctionResult('graveyard', result2)[0];
 		expect(newGraveyard.toLowerCase()).to.equal(currentGraveyard.toLowerCase());
+	});
+
+	it('Should check getGraveyardApprovalCount view function', async function () {
+		if (!graveyardSwapTestable) {
+			this.skip();
+			return;
+		}
+
+		// Query the count via mirror node
+		const encodedFunction = utsIface.encodeFunctionData('getGraveyardApprovalCount');
+		const result = await readOnlyEVMFromMirrorNode(env, contractId, encodedFunction, operatorId, false);
+		const count = utsIface.decodeFunctionResult('getGraveyardApprovalCount', result)[0];
+
+		// Should have at least 1 from the graveyard swap test
+		expect(Number(count)).to.be.greaterThan(0);
+		console.log(`Graveyard approval count: ${count}`);
 	});
 });
 

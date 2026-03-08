@@ -26,10 +26,14 @@ Output: Contract ID saved to `UNIFIED_TOKEN_SWAP_CONTRACT_ID` in `.env`
 
 ### Step 2: Fund Contract with HBAR
 
-Send 2-10 HBAR to the contract for tinybar operations (royalty defeat):
+The contract needs HBAR to pay tinybars during swaps (royalty defeat):
+- Treasury flow: net -1 tinybar per swap (pays 2, receives 1)
+- Graveyard flow: net 0 tinybars per swap (pays 1, receives 1)
+
+Send 2-10 HBAR to the contract:
 
 ```bash
-# Via HashScan or wallet, send HBAR to the contract's EVM address
+node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --fund-hbar 5
 ```
 
 ### Step 3: Add Output Token(s)
@@ -37,63 +41,82 @@ Send 2-10 HBAR to the contract for tinybar operations (royalty defeat):
 Associate output NFT tokens the contract will distribute:
 
 ```bash
-node scripts/unified/adminManagement.cjs --add-output-token=0.0.xxxxx
+node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --add-token 0.0.OUTPUT_TOKEN_ID
 ```
 
-**Gas note:** ~1,400,000 gas per token association
+Gas is auto-estimated via mirror node.
 
-### Step 4: Transfer Output NFTs to Contract
+### Step 4: Stake Output NFTs into Contract
 
-Send the new NFT serials to the contract address so it can distribute them:
+Load the new NFTs into the contract so it can distribute them during swaps.
+The script handles tinybar royalty defeat automatically.
 
 ```bash
-# Via HashScan or your minting script
+node scripts/unified/stakeNFTs.cjs --contract 0.0.CONTRACT_ID --token 0.0.OUTPUT_TOKEN_ID --serials 1,2,3,4,5
 ```
+
+**Note:** Max 8 NFTs per transaction (Hedera limit). The script auto-batches if you provide more.
 
 ### Step 5: Configure Swap Mappings
 
-Create a CSV file `swap_config.csv`:
+Create a JSON file `swaps.json`:
 
-```csv
-inputToken,inputSerial,outputToken,treasury,useGraveyard,outputSerial
-0.0.123456,1,0.0.789012,0.0.111111,false,1
-0.0.123456,2,0.0.789012,0.0.111111,false,2
-0.0.123456,3,0.0.789012,,true,3
+```json
+[
+  {
+    "inputToken": "0.0.123456",
+    "inputSerial": 1,
+    "outputToken": "0.0.789012",
+    "outputSerial": 1,
+    "treasury": "0.0.111111",
+    "useGraveyard": false
+  },
+  {
+    "inputToken": "0.0.123456",
+    "inputSerial": 2,
+    "outputToken": "0.0.789012",
+    "outputSerial": 2,
+    "treasury": "0.0.111111",
+    "useGraveyard": false
+  },
+  {
+    "inputToken": "0.0.123456",
+    "inputSerial": 3,
+    "outputToken": "0.0.789012",
+    "outputSerial": 3,
+    "useGraveyard": true
+  }
+]
 ```
 
 Load configurations:
 
 ```bash
-node scripts/unified/setupSwapConfig.cjs swap_config.csv
+node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --batch-add swaps.json
 ```
 
-**Gas note:** Add ~950,000 extra gas per new input token with `useGraveyard=true` (auto-associates)
+Gas is auto-estimated via mirror node. Batches of 30 configs per transaction with automatic resumability — if a batch fails, re-run the same command to continue from where it left off.
 
-### Step 6: Verify Contract HBAR Balance
-
-The contract needs HBAR to pay tinybars during swaps:
-- Treasury flow: Contract pays 2 tinybars (step 1 + step 2), receives 1 (step 3) = net -1 per swap
-- Graveyard flow: Contract pays 1 tinybar, receives 1 = net 0 per swap
+### Step 6: Verify Setup
 
 ```bash
-# Ensure contract has sufficient HBAR (sent during step 2)
-# For treasury flow, contract consumes 1 tinybar per swap
+# Check contract info (admins, tokens, HBAR balance, graveyard approvals, pause status)
+node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --info
+
+# Discover all active swap configs (no file needed)
+node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --query
+
+# Query configs from your swaps JSON (shows active vs consumed)
+node scripts/unified/setupSwapConfig.cjs --contract 0.0.CONTRACT_ID --query-all swaps.json
+
+# Query a specific swap config
+node scripts/unified/unifiedSwap.cjs --contract 0.0.CONTRACT_ID --query --token 0.0.123456 --serial 1
 ```
 
 ### Step 7: Unpause Contract
 
 ```bash
-node scripts/unified/adminManagement.cjs --unpause
-```
-
-### Verification
-
-```bash
-# Check contract info
-node scripts/unified/adminManagement.cjs --info
-
-# Query swap config
-node scripts/unified/unifiedSwap.cjs --query --token=0.0.123456 --serial=1
+node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --unpause
 ```
 
 ### User Requirements for Swapping
@@ -101,7 +124,7 @@ node scripts/unified/unifiedSwap.cjs --query --token=0.0.123456 --serial=1
 Before users can swap, they need:
 
 1. **Output token association** - Associate the new NFT token with their account
-2. **NFT allowance to contract** - Grant the contract permission to transfer their old NFT
+2. **NFT allowance to contract** - Grant the contract permission to transfer their old NFT (uses `approveTokenNftAllowanceAllSerials` to avoid Hedera's 100-allowance limit)
 3. **HBAR allowance to contract** - Grant 1 tinybar allowance per swap (net cost = 0)
 
 ```javascript
@@ -112,7 +135,7 @@ await new TokenAssociateTransaction()
   .setTokenIds([outputTokenId])
   .execute(client);
 
-// 2. Grant NFT allowance
+// 2. Grant NFT allowance (all serials - avoids 100-allowance limit)
 await new AccountAllowanceApproveTransaction()
   .approveTokenNftAllowanceAllSerials(inputTokenId, userAccountId, contractAccountId)
   .execute(client);
@@ -122,6 +145,16 @@ await new AccountAllowanceApproveTransaction()
   .approveHbarAllowance(userAccountId, contractAccountId, Hbar.fromTinybars(100))
   .execute(client);
 ```
+
+### Allowance Limit Note
+
+Hedera imposes a ~100 allowance slot limit per account. The contract uses `setApprovalForAll` (once per token) for graveyard approvals instead of per-serial `approveNFT` to stay within this limit. Monitor usage with:
+
+```bash
+node scripts/unified/adminManagement.cjs --contract 0.0.CONTRACT_ID --info
+```
+
+The `--info` output shows the graveyard approval count and warns when approaching the limit.
 
 ---
 
@@ -232,11 +265,11 @@ See `--multisig-help` on any script for detailed multi-sig usage.
 ## Post-Deployment Checklist
 
 - [ ] Contract deployed and ID recorded
-- [ ] Contract funded with HBAR (for tinybar operations)
-- [ ] Output token(s) associated with contract
-- [ ] Output NFTs transferred to contract
-- [ ] Swap configurations loaded
-- [ ] Treasury HBAR allowance set (for treasury flow)
+- [ ] Contract funded with HBAR (2-10 HBAR for tinybar operations)
+- [ ] Output token(s) associated with contract (`--add-token`)
+- [ ] Output NFTs staked into contract (`stakeNFTs.cjs`)
+- [ ] Swap configurations loaded (`--batch-add`)
+- [ ] Treasury has input token associated (for treasury flow)
 - [ ] Graveyard integration configured (if using graveyard flow)
 - [ ] Contract unpaused
 - [ ] Test swap executed successfully
@@ -252,8 +285,10 @@ See `--multisig-help` on any script for detailed multi-sig usage.
 
 ### "NFTTransferFailed" Error
 - Check user has granted NFT allowance to contract
-- For treasury flow: check treasury has HBAR allowance
+- Check user has HBAR allowance to contract (1 tinybar per swap for royalty defeat)
+- Check treasury has input token associated (for treasury flow)
 - Verify NFT serial exists and is owned by expected party
+- Verify contract has sufficient HBAR balance
 
 ### "ConfigNotFound" Error
 - Swap configuration not loaded for this input token/serial

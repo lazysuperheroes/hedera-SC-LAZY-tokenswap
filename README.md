@@ -14,8 +14,10 @@ Universal NFT swap contract with:
 - **Admin recovery**: `unstakeNFTs` function allows admins to recover stuck NFTs (receiver needs HBAR allowance)
 
 **User Requirements:**
-- NFT allowance to contract (for old NFT transfer)
+- NFT allowance to contract (use `approveTokenNftAllowanceAllSerials` to avoid Hedera's 100-allowance limit)
 - HBAR allowance to contract (1 tinybar per swap, net cost = 0)
+
+**Hedera Allowance Limit:** Hedera imposes ~100 allowance slots per account (including contracts). The contract uses `setApprovalForAll` for graveyard approvals (once per token, not per serial) and scripts use `approveTokenNftAllowanceAllSerials` for user/staking allowances. Monitor graveyard usage via `getGraveyardApprovalCount()` or `adminManagement.cjs --info`.
 
 ### NoFallbackTokenSwap (Legacy)
 Simpler swap contract for LAZY ecosystem projects:
@@ -120,18 +122,22 @@ node scripts/unified/adminManagement.cjs --pause --multisig --threshold=2
 node scripts/unified/adminManagement.cjs --multisig-help
 ```
 
-## Gas Considerations
+## Gas
 
-| Operation | Estimated Gas |
-|-----------|--------------|
-| Deploy UnifiedTokenSwap | ~5,000,000 |
-| addOutputToken (with association) | ~1,400,000 |
-| addSwapConfigs (no new associations) | ~500,000 |
-| addSwapConfigs (with auto-association) | ~1,500,000 (+950K per token) |
-| swapNFTs (treasury flow, 3-legged) | ~1,200,000 |
-| swapNFTs (graveyard flow, 3-legged) | ~1,200,000 |
-| stakeNFTs | ~600,000 |
-| unstakeNFTs | ~600,000 |
+All scripts auto-estimate gas via the Hedera mirror node with a safety buffer. Manual override available via `--gas <amount>` on any script.
+
+## CLI Scripts (UnifiedTokenSwap)
+
+| Script | Purpose |
+|--------|---------|
+| `deployUnifiedTokenSwap.cjs` | Deploy contract |
+| `adminManagement.cjs` | Admin ops, `--info`, `--fund-hbar`, pause/unpause |
+| `setupSwapConfig.cjs` | Add tokens, add/remove/query swap configs, `--batch-add`, `--query` |
+| `stakeNFTs.cjs` | Load output NFTs into contract (auto-batches) |
+| `unstakeNFTs.cjs` | Admin NFT recovery |
+| `unifiedSwap.cjs` | Execute swaps as a user |
+
+All scripts support `-h` / `--help` for usage details.
 
 ## License
 

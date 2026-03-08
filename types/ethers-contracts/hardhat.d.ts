@@ -16,7 +16,6 @@ getContractFactory(name: 'HederaTokenService', signerOrOptions?: ethers.Signer |
 getContractFactory(name: 'IBurnableHTS', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.IBurnableHTS__factory>
 getContractFactory(name: 'IHederaTokenService', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.IHederaTokenService__factory>
 getContractFactory(name: 'IHederaTokenServiceLite', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.IHederaTokenServiceLite__factory>
-getContractFactory(name: 'ILazyDelegateRegistry', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.ILazyDelegateRegistry__factory>
 getContractFactory(name: 'ILazyGasStation', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.ILazyGasStation__factory>
 getContractFactory(name: 'IRoles', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.IRoles__factory>
 getContractFactory(name: 'LazyGasStation', signerOrOptions?: ethers.Signer | FactoryOptions): Promise<Contracts.LazyGasStation__factory>
@@ -31,7 +30,6 @@ getContractAt(name: 'HederaTokenService', address: string | ethers.Addressable, 
 getContractAt(name: 'IBurnableHTS', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.IBurnableHTS>
 getContractAt(name: 'IHederaTokenService', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.IHederaTokenService>
 getContractAt(name: 'IHederaTokenServiceLite', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.IHederaTokenServiceLite>
-getContractAt(name: 'ILazyDelegateRegistry', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.ILazyDelegateRegistry>
 getContractAt(name: 'ILazyGasStation', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.ILazyGasStation>
 getContractAt(name: 'IRoles', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.IRoles>
 getContractAt(name: 'LazyGasStation', address: string | ethers.Addressable, signer?: ethers.Signer): Promise<Contracts.LazyGasStation>
@@ -46,7 +44,6 @@ deployContract(name: 'HederaTokenService', signerOrOptions?: ethers.Signer | Dep
 deployContract(name: 'IBurnableHTS', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IBurnableHTS>
 deployContract(name: 'IHederaTokenService', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IHederaTokenService>
 deployContract(name: 'IHederaTokenServiceLite', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IHederaTokenServiceLite>
-deployContract(name: 'ILazyDelegateRegistry', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.ILazyDelegateRegistry>
 deployContract(name: 'ILazyGasStation', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.ILazyGasStation>
 deployContract(name: 'IRoles', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IRoles>
 deployContract(name: 'LazyGasStation', signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.LazyGasStation>
@@ -61,7 +58,6 @@ deployContract(name: 'HederaTokenService', args: any[], signerOrOptions?: ethers
 deployContract(name: 'IBurnableHTS', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IBurnableHTS>
 deployContract(name: 'IHederaTokenService', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IHederaTokenService>
 deployContract(name: 'IHederaTokenServiceLite', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IHederaTokenServiceLite>
-deployContract(name: 'ILazyDelegateRegistry', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.ILazyDelegateRegistry>
 deployContract(name: 'ILazyGasStation', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.ILazyGasStation>
 deployContract(name: 'IRoles', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.IRoles>
 deployContract(name: 'LazyGasStation', args: any[], signerOrOptions?: ethers.Signer | DeployContractOptions): Promise<Contracts.LazyGasStation>

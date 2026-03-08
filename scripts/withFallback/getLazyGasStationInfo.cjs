@@ -12,7 +12,7 @@ const contractName = 'LazyGasStation';
 
 function showHelp() {
 	console.log(`
-Usage: node getLazyGasStationInfo.js <lgs-id>
+Usage: node getLazyGasStationInfo.cjs <lgs-id>
 
 Query and display LazyGasStation configuration (admins, authorizers, contract users).
 
@@ -24,7 +24,7 @@ Options:
   --json        Output results in JSON format
 
 Example:
-  node getLazyGasStationInfo.js 0.0.123456
+  node getLazyGasStationInfo.cjs 0.0.123456
 `);
 }
 

@@ -13,7 +13,7 @@ const contractName = 'FallbackTokenSwap';
 
 function showHelp() {
 	console.log(`
-Usage: node switchLGS.js <contract-id> <new-lgs-id>
+Usage: node switchLGS.cjs <contract-id> <new-lgs-id>
 
 Update the LazyGasStation reference on a FallbackTokenSwap contract.
 
@@ -25,7 +25,7 @@ Options:
   -h, --help    Show this help message
 
 Example:
-  node switchLGS.js 0.0.123456 0.0.789
+  node switchLGS.cjs 0.0.123456 0.0.789
 
   Updates contract 0.0.123456 to use LazyGasStation 0.0.789
 `);

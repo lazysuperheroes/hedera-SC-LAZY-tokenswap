@@ -15,7 +15,7 @@ const BATCH = 75;
 
 function showHelp() {
 	console.log(`
-Usage: node setupTokenSwapContract.js <contract-id> <path/to/file>
+Usage: node setupTokenSwapContract.cjs <contract-id> <path/to/file>
 
 Upload swap configuration to a FallbackTokenSwap contract.
 
@@ -30,7 +30,7 @@ CSV Format:
   Each line should be: 0.0.TOKEN_ID,OLD_SERIAL,NEW_SERIAL
 
 Example:
-  node setupTokenSwapContract.js 0.0.123456 ./swap-config.csv
+  node setupTokenSwapContract.cjs 0.0.123456 ./swap-config.csv
 `);
 }
 

@@ -281,8 +281,11 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 	function addAdmin(
 		address _admin
 	) external onlyAdmin returns (bool _added){
-		emit GasStationAccessControlEvent(msg.sender, _admin, true, Role.Admin);
-		return admins.add(_admin);
+		if (admins.add(_admin)) {
+			emit GasStationAccessControlEvent(msg.sender, _admin, true, Role.Admin);
+			return true;
+		}
+		return false;
 	}
 
 	/// @notice Remove an Admin user from the Gas Station
@@ -293,8 +296,11 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 		if (admins.length() == 1) {
 			revert LastAdmin();
 		}
-		emit GasStationAccessControlEvent(msg.sender, _admin, false, Role.Admin);
-		return admins.remove(_admin);
+		if (admins.remove(_admin)) {
+			emit GasStationAccessControlEvent(msg.sender, _admin, false, Role.Admin);
+			return true;
+		}
+		return false;
 	}
 
 	/// @notice Add an Authorizer user to the Gas Station
@@ -302,8 +308,11 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 	function addAuthorizer(
 		address _authorized
 	) external onlyAdmin returns (bool _added){
-		emit GasStationAccessControlEvent(msg.sender, _authorized, true, Role.GasStationAuthorizer);
-		return authorizers.add(_authorized);
+		if (authorizers.add(_authorized)) {
+			emit GasStationAccessControlEvent(msg.sender, _authorized, true, Role.GasStationAuthorizer);
+			return true;
+		}
+		return false;
 	}
 
 	/// @notice Remove an Authorizer user from the Gas Station
@@ -311,8 +320,11 @@ contract LazyGasStation is HederaTokenService, ILazyGasStation, IRoles, Reentran
 	function removeAuthorizer(
 		address _authorized
 	) external onlyAdmin returns (bool _removed){
-		emit GasStationAccessControlEvent(msg.sender, _authorized, false, Role.GasStationAuthorizer);
-		return authorizers.remove(_authorized);
+		if (authorizers.remove(_authorized)) {
+			emit GasStationAccessControlEvent(msg.sender, _authorized, false, Role.GasStationAuthorizer);
+			return true;
+		}
+		return false;
 	}
 
 	/// @notice Add a contract user (who can call for refills) to the Gas Station

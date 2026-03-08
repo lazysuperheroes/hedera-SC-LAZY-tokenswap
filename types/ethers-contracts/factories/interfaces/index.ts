@@ -4,6 +4,5 @@
 export * as iBurnableHtsSol from './IBurnableHTS.sol/index.js';
 export * as iHederaTokenServiceSol from './IHederaTokenService.sol/index.js';
 export * as iHederaTokenServiceLiteSol from './IHederaTokenServiceLite.sol/index.js';
-export * as iLazyDelegateRegistrySol from './ILazyDelegateRegistry.sol/index.js';
 export * as iLazyGasStationSol from './ILazyGasStation.sol/index.js';
 export * as iRolesSol from './IRoles.sol/index.js';
