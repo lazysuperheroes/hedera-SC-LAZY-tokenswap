@@ -10,6 +10,7 @@
     "test-fb": "npx hardhat test test/FallbackTokenSwap.test.cjs",
     "test-uts": "npx hardhat test test/UnifiedTokenSwap.test.cjs",
     "deploy:unified": "node scripts/unified/deployUnifiedTokenSwap.cjs",
+    "verify": "node scripts/verify/verifyContracts.cjs",
     "logs": "node scripts/debug/getContractLogs.cjs",
     "solhint": "npx solhint -f table contracts/**/*.sol",
     "build:package": "node scripts/build-package.cjs",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@hashgraph/sdk": "^2.78.0",
     "@lazysuperheroes/hedera-multisig": "^1.1.0",
+    "@lazysuperheroes/hedera-verify": "^0.2.0",
     "@lazysuperheroes/token-graveyard": "^2.1.2",
     "axios": "^1.13.2",
     "dotenv": "^17.0.0",
