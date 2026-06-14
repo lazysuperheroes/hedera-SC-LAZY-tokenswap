@@ -55,6 +55,7 @@ Hedera imposes a ~100 allowance slot limit per account (including smart contract
 - **Graveyard approvals**: Contract uses `setApprovalForAll` (once per input token) instead of per-serial `approveNFT`. Tracked via `graveyardApprovals` mapping and `graveyardApprovalCount` counter. `getGraveyardApprovalCount()` exposes current usage.
 - **User NFT allowances**: Scripts use `approveTokenNftAllowanceAllSerials` instead of per-serial allowances.
 - **Staking allowances**: `stakeNFTs.cjs` uses `approveTokenNftAllowanceAllSerials` for the same reason.
+- **Skip-if-present**: `stakeNFTs.cjs` and `unifiedSwap.cjs` first check the mirror node via `hasNFTAllowanceForAll()` (in `hederaMirrorHelpers.cjs`) and skip the approval tx when an all-serials allowance is already in place — one grant covers every batch/swap. `--skip-allowance` bypasses the check entirely.
 
 ### Swap Config Storage
 
@@ -97,6 +98,34 @@ PRIVATE_KEY=302e...       # ED25519 or ECDSA
 ```
 
 Optional for graveyard testing: `TOKEN_GRAVEYARD_CONTRACT_ID=0.0.xxxxx`
+
+## Contract Verification (Sourcify)
+
+HashScan now reads verification from the public Sourcify (`sourcify.dev`), which
+supports Hedera mainnet (chainId 295) and testnet (296). Verification is handled
+by `@lazysuperheroes/hedera-verify` and is **read-only** — no private key, no gas.
+
+- **Registry:** `verify.config.cjs` maps each production contract to the `.env`
+  var(s) holding its deployed ID. It's a `.cjs` file because this is an ESM
+  project (`"type": "module"`), so a `verify.config.js` would be parsed as ESM.
+- **Hardhat 3 adapter:** `utils/verifyHelpers.cjs` resolves the Sourcify `build`
+  payload from Hardhat 3 artifacts. This is required because the package's own
+  resolver targets the Hardhat 2 layout: HH3 emits no `.dbg.json` files (the
+  artifact carries a `buildInfoId` instead) and remaps source paths inside the
+  Standard-JSON input (`contracts/X.sol` -> `project/contracts/X.sol`, exposed as
+  `inputSourceName`), which is the key Sourcify's `contractIdentifier` must use.
+  The package's `npx hedera-verify` CLI therefore does NOT work here — use the
+  runner below, which passes a pre-resolved `build` to the package engine.
+- **Run a pass:** `npm run verify` (or `node scripts/verify/verifyContracts.cjs`)
+  verifies every registry contract that has a deployed ID in `.env`. Subcommands:
+  `... -- list` (registry vs `.env`), `... -- list-artifacts`. Ad-hoc:
+  `... -- UnifiedTokenSwap=0.0.123456`. Filter: `... -- --only UnifiedTokenSwap`.
+- **On deploy:** `deployUnifiedTokenSwap.cjs` verifies automatically when
+  `VERIFY_ON_DEPLOY=true` (opt-in), after the contract is created.
+- **Statuses:** `verified`/`already_verified` = success (`exact_match` best,
+  `match`/partial still verified). `pending` = async Sourcify job still running;
+  re-run to confirm. `failed` (bytecode mismatch) = on-chain bytecode doesn't
+  match current source (usually an older deployment). `error` = config/network.
 
 ## NPM Package Build
 

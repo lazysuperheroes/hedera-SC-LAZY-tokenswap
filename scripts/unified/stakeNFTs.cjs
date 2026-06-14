@@ -2,7 +2,6 @@ const {
 	ContractId,
 	ContractExecuteTransaction,
 	AccountAllowanceApproveTransaction,
-	NftId,
 	TokenId,
 } = require('@hashgraph/sdk');
 const fs = require('fs');
@@ -10,6 +9,7 @@ const { ethers } = require('ethers');
 const { getArgFlag, getArg } = require('../../utils/nodeHelpers.cjs');
 const { initializeClient } = require('../../utils/clientFactory.cjs');
 const { estimateGas } = require('../../utils/gasHelpers.cjs');
+const { hasNFTAllowanceForAll } = require('../../utils/hederaMirrorHelpers.cjs');
 
 const contractName = 'UnifiedTokenSwap';
 
@@ -121,17 +121,25 @@ const main = async () => {
 	);
 	const iface = new ethers.Interface(contractJson.abi);
 
-	// Set NFT allowances if not skipped
+	// Set NFT allowance for all serials so the contract can pull them. Skip the
+	// transaction entirely if an all-serials allowance is already in place — this
+	// is an all-serials approval, so one grant covers every batch/run. Pass
+	// --skip-allowance to bypass the check too.
 	if (!getArgFlag('skip-allowance')) {
-		if (!jsonOutput) console.log('\nSetting NFT allowance for all serials...');
+		const alreadyApproved = await hasNFTAllowanceForAll(env, operatorId, tokenId, contractId);
+		if (alreadyApproved) {
+			if (!jsonOutput) console.log('\nNFT all-serials allowance already in place — skipping approval.');
+		} else {
+			if (!jsonOutput) console.log('\nSetting NFT allowance for all serials...');
 
-		// Use approveTokenNftAllowanceAllSerials to avoid Hedera's 100 allowance limit
-		const allowanceTx = new AccountAllowanceApproveTransaction()
-			.approveTokenNftAllowanceAllSerials(tokenId, operatorId, contractId);
+			// Use approveTokenNftAllowanceAllSerials to avoid Hedera's 100 allowance limit
+			const allowanceTx = new AccountAllowanceApproveTransaction()
+				.approveTokenNftAllowanceAllSerials(tokenId, operatorId, contractId);
 
-		const allowanceResponse = await allowanceTx.execute(client);
-		const allowanceReceipt = await allowanceResponse.getReceipt(client);
-		if (!jsonOutput) console.log(`  Approved all serials: ${allowanceReceipt.status}`);
+			const allowanceResponse = await allowanceTx.execute(client);
+			const allowanceReceipt = await allowanceResponse.getReceipt(client);
+			if (!jsonOutput) console.log(`  Approved all serials: ${allowanceReceipt.status}`);
+		}
 	}
 
 	// Split serials into batches of MAX_NFTS_PER_TX

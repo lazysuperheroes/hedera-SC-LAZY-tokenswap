@@ -3,7 +3,6 @@ const {
 	ContractId,
 	ContractExecuteTransaction,
 	AccountAllowanceApproveTransaction,
-	NftId,
 	TokenId,
 	Hbar,
 } = require('@hashgraph/sdk');
@@ -13,7 +12,7 @@ const { getArgFlag, getArg } = require('../../utils/nodeHelpers.cjs');
 const { initializeClient } = require('../../utils/clientFactory.cjs');
 const { readOnlyEVMFromMirrorNode } = require('../../utils/solidityHelpers.cjs');
 const { estimateGas } = require('../../utils/gasHelpers.cjs');
-const { checkHbarAllowances } = require('../../utils/hederaMirrorHelpers.cjs');
+const { checkHbarAllowances, hasNFTAllowanceForAll } = require('../../utils/hederaMirrorHelpers.cjs');
 
 const contractName = 'UnifiedTokenSwap';
 
@@ -220,16 +219,21 @@ const main = async () => {
 
 	// Set allowances if not skipped
 	if (!getArgFlag('skip-allowance')) {
-		// Set NFT allowance for all serials
-		if (!jsonOutput) console.log('\nSetting NFT allowance for all serials...');
+		// Set NFT allowance for all serials — skip if already granted (one
+		// all-serials approval covers every future swap of this token).
+		if (await hasNFTAllowanceForAll(env, operatorId, tokenId, contractId)) {
+			if (!jsonOutput) console.log('\nNFT all-serials allowance already in place — skipping approval.');
+		} else {
+			if (!jsonOutput) console.log('\nSetting NFT allowance for all serials...');
 
-		// Use approveTokenNftAllowanceAllSerials to avoid Hedera's 100 allowance limit
-		const allowanceTx = new AccountAllowanceApproveTransaction()
-			.approveTokenNftAllowanceAllSerials(tokenId, operatorId, contractId);
+			// Use approveTokenNftAllowanceAllSerials to avoid Hedera's 100 allowance limit
+			const allowanceTx = new AccountAllowanceApproveTransaction()
+				.approveTokenNftAllowanceAllSerials(tokenId, operatorId, contractId);
 
-		const allowanceResponse = await allowanceTx.execute(client);
-		const allowanceReceipt = await allowanceResponse.getReceipt(client);
-		if (!jsonOutput) console.log(`  Approved all serials: ${allowanceReceipt.status}`);
+			const allowanceResponse = await allowanceTx.execute(client);
+			const allowanceReceipt = await allowanceResponse.getReceipt(client);
+			if (!jsonOutput) console.log(`  Approved all serials: ${allowanceReceipt.status}`);
+		}
 
 		// Set HBAR allowance (1 tinybar per swap for royalty defeat)
 		if (!jsonOutput) console.log('\nChecking HBAR allowance...');

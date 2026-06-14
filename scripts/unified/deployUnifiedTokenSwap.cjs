@@ -5,6 +5,8 @@ const {
 const fs = require('fs');
 const { getArgFlag, getArg } = require('../../utils/nodeHelpers.cjs');
 const { initializeClient } = require('../../utils/clientFactory.cjs');
+const { verifyContract } = require('@lazysuperheroes/hedera-verify');
+const { resolveHederaVerifyBuild } = require('../../utils/verifyHelpers.cjs');
 
 const contractName = 'UnifiedTokenSwap';
 
@@ -54,9 +56,7 @@ const main = async () => {
 		const graveyardId = ContractId.fromString(graveyardArg);
 		graveyardAddress = graveyardId.toSolidityAddress();
 		if (!jsonOutput) console.log(`-Using Graveyard: ${graveyardArg} (${graveyardAddress})`);
-	} else {
-		if (!jsonOutput) console.log('-Graveyard: Not configured (can be set later)');
-	}
+	} else if (!jsonOutput) {console.log('-Graveyard: Not configured (can be set later)');}
 
 	const gasLimit = Number(getArg('gas')) || 5_000_000;
 	if (!jsonOutput) console.log(`-Gas Limit: ${gasLimit.toLocaleString()}`);
@@ -90,16 +90,8 @@ const main = async () => {
 	const contractCreateRx = await contractCreateSubmit.getReceipt(client);
 	const contractId = contractCreateRx.contractId;
 
-	if (jsonOutput) {
-		console.log(JSON.stringify({
-			success: true,
-			contractId: contractId.toString(),
-			evmAddress: contractId.toSolidityAddress(),
-			operator: operatorId.toString(),
-			graveyard: graveyardArg || null,
-			environment: env,
-		}));
-	} else {
+	// Show deployment details first; source verification (if enabled) logs below.
+	if (!jsonOutput) {
 		console.log('\n=== Deployment Complete ===');
 		console.log(`Contract ID: ${contractId}`);
 		console.log(`EVM Address: ${contractId.toSolidityAddress()}`);
@@ -118,6 +110,41 @@ const main = async () => {
 		console.log(`  3. Stake NFTs:       node stakeNFTs.cjs --contract ${contractId} --token <token-id> --serials 1,2,3`);
 		console.log(`  4. Configure swaps:  node setupSwapConfig.cjs --contract ${contractId} --batch-add swaps.json`);
 		console.log(`  5. Unpause:          node adminManagement.cjs --contract ${contractId} --unpause`);
+	}
+
+	// Opt-in source verification on Sourcify (read-only: no key, no gas). Enable
+	// with VERIFY_ON_DEPLOY=true in .env. The retry/initial delay covers the few
+	// seconds the mirror node needs to index a freshly deployed contract.
+	let verification = null;
+	if (process.env.VERIFY_ON_DEPLOY === 'true' || process.env.VERIFY_ON_DEPLOY === '1') {
+		if (!jsonOutput) console.log('\n- Verifying source on Sourcify (VERIFY_ON_DEPLOY)...');
+		try {
+			verification = await verifyContract({
+				build: resolveHederaVerifyBuild({ contractName }),
+				contractName,
+				env,
+				contractId,
+				initialDelayMs: 10000,
+				attempts: 4,
+				retryDelayMs: 8000,
+				quiet: jsonOutput,
+			});
+		} catch (err) {
+			verification = { status: 'error', message: err.message || String(err) };
+			if (!jsonOutput) console.error(`  Verification error: ${verification.message}`);
+		}
+	}
+
+	if (jsonOutput) {
+		console.log(JSON.stringify({
+			success: true,
+			contractId: contractId.toString(),
+			evmAddress: contractId.toSolidityAddress(),
+			operator: operatorId.toString(),
+			graveyard: graveyardArg || null,
+			environment: env,
+			verification,
+		}));
 	}
 
 	client.close();
