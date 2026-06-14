@@ -86,6 +86,25 @@ async function getNFTApprovedForAllAllowances(env, _userId) {
 	return spenderTokenMap;
 }
 
+/**
+ * Check whether an owner has already granted an all-serials (approved_for_all)
+ * NFT allowance for a given token to a given spender. Lets callers skip a
+ * redundant approveTokenNftAllowanceAllSerials transaction.
+ * @param {string} env  TEST|MAIN|PREVIEW|LOCAL
+ * @param {AccountId|string} _ownerId  account that grants the allowance
+ * @param {TokenId|string} _tokenId  NFT token
+ * @param {AccountId|ContractId|string} _spenderId  spender (e.g. the swap contract)
+ * @returns {Promise<boolean>} true if an approved_for_all allowance already exists
+ */
+async function hasNFTAllowanceForAll(env, _ownerId, _tokenId, _spenderId) {
+	const spenderTokenMap = await getNFTApprovedForAllAllowances(env, _ownerId);
+	// On a mirror error the helper returns 0 (not a Map) — treat as "not set" so
+	// the caller falls back to granting the allowance.
+	if (!(spenderTokenMap instanceof Map)) return false;
+	const tokens = spenderTokenMap.get(_spenderId.toString());
+	return Array.isArray(tokens) && tokens.includes(_tokenId.toString());
+}
+
 async function checkMirrorNFTAllowance(env, _userId, _tokenId, _serial) {
 	const baseUrl = getBaseURL(env);
 	const url = `${baseUrl}/api/v1/tokens/${_tokenId}/nfts?account.id=${_userId.toString()}`;
@@ -663,6 +682,7 @@ module.exports = {
 	checkHbarAllowances,
 	checkNFTOwnership,
 	getNFTApprovedForAllAllowances,
+	hasNFTAllowanceForAll,
 	homebrewPopulateAccountEvmAddress,
 	homebrewPopulateAccountNum,
 	hasUserGotAutoAssociations,
